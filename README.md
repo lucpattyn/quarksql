@@ -337,20 +337,20 @@ https://github.com/lucpattyn/quarks/blob/dev/install_in_ubuntu.md
 
 ## Build and Run
 
-# 1. Create & enter the build directory
+**1. Create & enter the build directory
 mkdir -p build
 cd build
 
-# 2. Configure the project (this will download Boost 1.69 if needed)
+**2. Configure the project (this will download Boost 1.69 if needed)
 cmake ..
 
-# 3. Compile the executable
+**3. Compile the executable
 cmake --build . -- -j$(nproc)
 
 ## Test
 
-# 1. Create a folder named templates in build folder
+**1. Create a folder named templates in build folder
 
-# 2. Place the index.html file there and in browser navigate to "https://localhost:18080" to run the tests
+**2. Place the index.html file there and in browser navigate to "https://localhost:18080" to run the tests
 
 
