@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>RocksDB + Crow SQL Tester</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg:#0f172a;
+      --card:#1e2a44;
+      --radius:12px;
+      --shadow:0 20px 40px -10px rgba(0,0,0,0.4);
+      --accent:#6366f1;
+      --muted:#8f9bb3;
+      --border:1px solid rgba(255,255,255,0.08);
+      --transition:.25s cubic-bezier(.4,.2,.2,1);
+      font-family: system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+      color:#f0f6fc;
+    }
+    *{box-sizing:border-box;}
+    body {
+      margin:0;
+      background: linear-gradient(135deg,#0f172a 0%,#1f2f5a 100%);
+      min-height:100vh;
+      padding:1rem;
+    }
+    h1 {
+      margin:0 0 .5rem;
+      font-size:1.75rem;
+      display:inline-block;
+    }
+    .container {
+      max-width:1100px;
+      margin:0 auto;
+      display:grid;
+      gap:1rem;
+      grid-template-columns: 1fr 360px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding:1rem 1.25rem;
+      position:relative;
+      box-shadow: var(--shadow);
+      border: var(--border);
+      display:flex;
+      flex-direction:column;
+      gap:0.75rem;
+    }
+    .small {
+      font-size:.8rem;
+      color: var(--muted);
+    }
+    .btn {
+      padding:.55rem .9rem;
+      border:none;
+      cursor:pointer;
+      border-radius:8px;
+      font-weight:600;
+      display:inline-flex;
+      align-items:center;
+      gap:.35rem;
+      transition: var(--transition);
+      background: var(--accent);
+      color:#fff;
+      position:relative;
+    }
+    .btn:hover { filter:brightness(1.1); }
+    .input, textarea, select {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      padding:.6rem .8rem;
+      border-radius:6px;
+      color:#f0f6fc;
+      width:100%;
+      font-family:inherit;
+      font-size:.95rem;
+      resize:vertical;
+    }
+    pre {
+      background: rgba(255,255,255,0.03);
+      padding:.75rem;
+      border-radius:6px;
+      overflow:auto;
+      font-size:.8rem;
+      line-height:1.2;
+    }
+    .flex { display:flex; gap:0.75rem; }
+    .pill { background:rgba(255,255,255,0.08); padding:4px 10px; border-radius:999px; font-size:.65rem; margin-right:.25rem; display:inline-block; }
+    table {
+      border-collapse:collapse;
+      width:100%;
+      font-size:.85rem;
+      margin-top:.5rem;
+    }
+    th, td {
+      padding:.55rem .75rem;
+      border-bottom:1px solid rgba(255,255,255,0.08);
+      text-align:left;
+    }
+    th { position:sticky; top:0; background: rgba(30,42,68,0.95); }
+    .example { cursor:pointer; background:#1f2a55; padding:6px 10px; border-radius:6px; font-size:.75rem; margin:2px; display:inline-block; }
+    .example:hover { background:rgba(99,102,241,0.8); }
+    .tagline { font-size:.9rem; margin-bottom:.5rem; }
+    .divider { height:1px; background:rgba(255,255,255,0.07); margin:10px 0; }
+    .result-wrapper { overflow:auto; max-height:400px; }
+    .error { background:#ff4d4f; padding:6px 12px; border-radius:6px; color:#fff; font-weight:600; margin-bottom:6px; }
+    .success { background:#22c55e; padding:6px 12px; border-radius:6px; color:#fff; font-weight:600; margin-bottom:6px; }
+    .label { display:block; font-size:.75rem; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.7px; }
+    .small-card {
+      background: rgba(255,255,255,0.02);
+      border-radius:6px;
+      padding:6px 10px;
+      font-size:.7rem;
+      display:inline-block;
+    }
+    .top-bar { display:flex; gap:1rem; flex-wrap:wrap; justify-content:space-between; align-items:center; }
+    .endpoint-wrapper { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+    .monos { font-family: ui-monospace,monospace; }
+  </style>
+</head>
+<body>
+  <div style="max-width:1200px;margin:0 auto;">
+    <div class="top-bar" style="margin-bottom:8px;">
+      <div>
+        <h1>SQL/Test Console</h1>
+        <div class="tagline">Test your Crow + RocksDB engine: inserts, selects, joins, ranges, like, group/order, update/delete/batch.</div>
+      </div>
+      <div class="endpoint-wrapper">
+        <div class="label" style="margin-right:4px;">Backend URL:</div>
+        <input id="endpointInput" class="input" style="width:220px;" value="/query" />
+        <button class="btn" onclick="runAllExamples()">Run All Examples</button>
+      </div>
+    </div>
+    <div class="container">
+      <!-- Left: main interactions -->
+      <div>
+        <div class="card">
+          <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+            <div style="flex:1; min-width:220px;">
+              <div class="label">Table</div>
+              <input id="tableName" class="input" placeholder="e.g. users" value="users" />
+            </div>
+            <div style="flex:2; min-width:250px;">
+              <div class="label">SQL Query</div>
+              <textarea id="sqlQuery" class="input" rows="3" placeholder="SELECT * FROM users WHERE age &gt; '30' AND name LIKE 'J%';">SELECT * FROM users WHERE age > '30' AND name LIKE 'J%';</textarea>
+            </div>
+          </div>
+          <div class="flex" style="margin-top:6px;flex-wrap:wrap;">
+            <div><button class="btn" onclick="doSQL()">Run SQL</button></div>
+            <div><button class="btn" onclick="doInsert()">Insert Sample</button></div>
+            <div><button class="btn" onclick="doUpdate()">Update (WHERE)</button></div>
+            <div><button class="btn" onclick="doDelete()">Delete (WHERE)</button></div>
+            <div><button class="btn" onclick="doBatch()">Batch (mixed)</button></div>
+          </div>
+          <div class="small">You can also edit the JSON payloads manually below for advanced tests.</div>
+        </div>
+
+        <div class="card" id="examples">
+          <div><strong>Example Scenarios</strong></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+            <div>
+              <div class="small-card"><strong>Insert Users</strong></div>
+              <div>
+                <div class="example" onclick="insertUser({id:1,name:'John',age:35,city:'London',signup:'2024-01-15'})">Insert John</div>
+                <div class="example" onclick="insertUser({id:2,name:'Jane',age:28,city:'Paris',signup:'2023-11-20'})">Insert Jane</div>
+                <div class="example" onclick="insertUser({id:3,name:'Jim',age:42,city:'New York',signup:'2025-03-10'})">Insert Jim</div>
+                <div class="example" onclick="insertUser({id:4,name:'Jill',age:30,city:'London',signup:'2024-06-05'})">Insert Jill</div>
+              </div>
+            </div>
+            <div>
+              <div class="small-card"><strong>Insert Orders (for JOIN)</strong></div>
+              <div>
+                <div class="example" onclick="insertOrder({order_id:101,user_id:1,amount:250,date:'2025-01-02'})">Order 101 (John)</div>
+                <div class="example" onclick="insertOrder({order_id:102,user_id:2,amount:120,date:'2024-12-22'})">Order 102 (Jane)</div>
+                <div class="example" onclick="insertOrder({order_id:103,user_id:1,amount:75,date:'2025-02-15'})">Order 103 (John)</div>
+                <div class="example" onclick="insertOrder({order_id:104,user_id:4,amount:980,date:'2024-07-01'})">Order 104 (Jill)</div>
+              </div>
+            </div>
+            <div>
+              <div class="small-card"><strong>WHERE with AND/OR</strong></div>
+              <div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users WHERE city='London' AND age > '30';\")">London & Age&gt;30</div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users WHERE city='London' OR city='Paris';\")">London or Paris</div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users WHERE (city='London' AND age>'25') OR (city='Paris' AND age<'35');\")">Compound OR/AND</div>
+              </div>
+            </div>
+            <div>
+              <div class="small-card"><strong>LIKE & Range</strong></div>
+              <div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users WHERE name LIKE 'J%';\")">Name starts J</div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users WHERE age >= '30' AND age <= '40';\")">Age 30–40</div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users WHERE signup >= '2024-01-01' AND signup <= '2024-12-31';\")">Signup 2024</div>
+              </div>
+            </div>
+            <div>
+              <div class="small-card"><strong>JOIN</strong></div>
+              <div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount > '100';\")">User orders &gt;100</div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE u.city='London';\")">London users + orders</div>
+              </div>
+            </div>
+            <div>
+              <div class="small-card"><strong>Group/Order</strong></div>
+              <div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM orders WHERE amount > '50' GROUP BY user_id ORDER BY amount DESC;\")">Group by user_id</div>
+                <div class="example" onclick="setSQL(\"SELECT * FROM users WHERE age > '20' ORDER BY age ASC;\")">Order users by age</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div><strong>Raw Request / Response</strong></div>
+          <div class="flex" style="gap:1rem;flex-wrap:wrap;">
+            <div style="flex:1; min-width:240px;">
+              <div class="label">Custom JSON</div>
+              <textarea id="rawRequest" class="input" rows="7">
+{
+  "command":"select_sql",
+  "sql":"SELECT * FROM users WHERE age > '25';"
+}
+              </textarea>
+              <div style="margin-top:6px;">
+                <button class="btn" onclick="sendRaw()">Send Raw</button>
+              </div>
+            </div>
+            <div style="flex:1; min-width:240px;">
+              <div class="label">Response</div>
+              <pre id="rawResponse">{ }</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div><strong>Results</strong></div>
+          <div id="messages"></div>
+          <div class="result-wrapper">
+            <table id="resultTable">
+              <thead><tr id="resultHeader"></tr></thead>
+              <tbody id="resultBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: help / examples summary -->
+      <div>
+        <div class="card">
+          <div><strong>Quick Instructions</strong></div>
+          <div class="small">
+            <ul>
+              <li>Insert records first using sample buttons or custom JSON.</li>
+              <li>Run SELECT queries; SQL is case-insensitive for keywords.</li>
+              <li>Use <code>LIKE 'prefix%'</code>, numeric/date comparisons work if stored as ISO strings or numbers.</li>
+              <li>JOIN syntax expects your parser supports the form shown; adapt if aliasing differs.</li>
+              <li>Batch can include mixed insert/update/delete objects; format yourself.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div><strong>Example Payloads</strong></div>
+          <div class="small-card">Insert:</div>
+          <pre>{
+  "command": "insert",
+  "table": "users",
+  "data": { "id": 5, "name": "Alice", "age": 27, "city": "Berlin", "signup":"2024-09-01" }
+}</pre>
+          <div class="small-card">Update:</div>
+          <pre>{
+  "command": "update",
+  "table": "users",
+  "where": "name='Alice'",
+  "data": { "city": "Amsterdam" }
+}</pre>
+          <div class="small-card">Delete:</div>
+          <pre>{
+  "command": "delete",
+  "table": "users",
+  "where": "age<'30'"
+}</pre>
+          <div class="small-card">Batch:</div>
+          <pre>{
+  "command":"batch",
+  "commands":[
+    { "command":"insert", "table":"users", "data": { "id": 6, "name":"Bob", "age":33 } },
+    { "command":"update", "table":"users", "where":"id='6'", "data": { "city":"Oslo" } }
+  ]
+}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function getEndpoint() {
+      const val = document.getElementById("endpointInput")?.value.trim();
+      return val && val.length ? val : "/query";
+    }
+
+    function showMessage(msg, type="") {
+      const container = document.getElementById("messages");
+      const div = document.createElement("div");
+      div.className = type === "error" ? "error" : type === "success" ? "success" : "";
+      div.textContent = msg;
+      container.prepend(div);
+      setTimeout(()=>{ div.remove(); }, 7000);
+      console.log(type || "info", msg);
+    }
+
+    function renderResult(arr) {
+      const header = document.getElementById("resultHeader");
+      const body = document.getElementById("resultBody");
+      header.innerHTML = "";
+      body.innerHTML = "";
+      if (!Array.isArray(arr)) {
+        showMessage("Result is not an array", "error");
+        return;
+      }
+      if (arr.length === 0) {
+        showMessage("Empty result set");
+        return;
+      }
+      const cols = new Set();
+      arr.forEach(r => {
+        if (r && typeof r === "object") Object.keys(r).forEach(k => cols.add(k));
+      });
+      const columns = Array.from(cols);
+      columns.forEach(c => {
+        const th = document.createElement("th");
+        th.textContent = c;
+        header.appendChild(th);
+      });
+      arr.forEach(r => {
+        const tr = document.createElement("tr");
+        columns.forEach(c => {
+          const td = document.createElement("td");
+          td.textContent = (r && r[c] !== undefined ? r[c] : "");
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+    }
+
+    async function callAPI(payload) {
+      const endpoint = getEndpoint();
+      try {
+        const resp = await fetch(endpoint, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload),
+        });
+        const text = await resp.text();
+        let json;
+        try {
+          json = JSON.parse(text);
+        } catch (e) {
+          showMessage("Non-JSON response from server", "error");
+          document.getElementById("rawResponse").textContent = text;
+          return null;
+        }
+        document.getElementById("rawResponse").textContent = JSON.stringify(json, null, 2);
+        if (!resp.ok) {
+          showMessage("Server error: " + (json.error || resp.statusText), "error");
+        }
+        return json;
+      } catch (e) {
+        showMessage("Network/error: " + e.message, "error");
+        console.error(e);
+        return null;
+      }
+    }
+
+    async function insertUser(obj) {
+      const payload = {
+        command:"insert",
+        table:"users",
+        data: obj
+      };
+      const res = await callAPI(payload);
+      if (res) showMessage("Inserted user " + obj.name, "success");
+      return res;
+    }
+
+    async function insertOrder(obj) {
+      const payload = {
+        command:"insert",
+        table:"orders",
+        data: obj
+      };
+      const res = await callAPI(payload);
+      if (res) showMessage("Inserted order " + obj.order_id, "success");
+      return res;
+    }
+
+    function setSQL(s) {
+      document.getElementById("sqlQuery").value = s;
+    }
+
+    async function doSQL() {
+      const sql = document.getElementById("sqlQuery").value.trim();
+      if (!sql) { showMessage("Empty SQL", "error"); return; }
+      const payload = { command:"select_sql", sql };
+      const res = await callAPI(payload);
+      if (res) renderResult(res);
+    }
+
+    async function doInsert() {
+      const table = document.getElementById("tableName").value.trim();
+      if (!table) { showMessage("No table", "error"); return; }
+      const sample = {
+        command:"insert",
+        table,
+        data: {
+          id: Math.floor(Math.random()*100000),
+          name: "Test"+Math.floor(Math.random()*100),
+          age: Math.floor(Math.random()*60)+18,
+          city: "City"+(Math.floor(Math.random()*5)+1),
+          signup: new Date().toISOString().slice(0,10)
+        }
+      };
+      const res = await callAPI(sample);
+      if (res) {
+        showMessage("Inserted into "+table, "success");
+        renderResult([ sample.data ]);
+      }
+    }
+
+    async function doUpdate() {
+      const table = document.getElementById("tableName").value.trim();
+      const sql = document.getElementById("sqlQuery").value.trim();
+      const whereMatch = sql.match(/WHERE\s+(.+?);?$/i);
+      if (!whereMatch) { showMessage("Cannot derive WHERE from SQL", "error"); return; }
+      const where = whereMatch[1];
+      const payload = {
+        command:"update",
+        table,
+        where,
+        data: { updated_flag: "1" }
+      };
+      const res = await callAPI(payload);
+      if (res) showMessage("Update affected: "+(res.count||0), "success");
+    }
+
+    async function doDelete() {
+      const table = document.getElementById("tableName").value.trim();
+      const sql = document.getElementById("sqlQuery").value.trim();
+      const whereMatch = sql.match(/WHERE\s+(.+?);?$/i);
+      if (!whereMatch) { showMessage("Cannot derive WHERE from SQL", "error"); return; }
+      const where = whereMatch[1];
+      const payload = { command:"delete", table, where };
+      const res = await callAPI(payload);
+      if (res) showMessage("Delete affected: "+(res.count||0), "success");
+    }
+
+    async function doBatch() {
+      const payload = {
+        command:"batch",
+        commands:[
+          { command:"insert", table:"users", data: { id: 9999, name:"BatchUser", age:50, city:"Rome", signup:"2025-05-05" } },
+          { command:"update", table:"users", where:"id='9999'", data: { city:"Madrid" } }
+        ]
+      };
+      const res = await callAPI(payload);
+      if (res) showMessage("Batch status: "+(res.status||"unknown"), "success");
+    }
+
+    async function sendRaw() {
+      let raw;
+      try {
+        raw = JSON.parse(document.getElementById("rawRequest").value);
+      } catch (e) {
+        showMessage("Bad JSON: "+e.message, "error");
+        return;
+      }
+      const res = await callAPI(raw);
+      if (res && raw.command === "select_sql" && Array.isArray(res)) {
+        renderResult(res);
+      }
+    }
+
+    async function runAllExamples() {
+      try {
+        await insertUser({id:1,name:'John',age:35,city:'London',signup:'2024-01-15'});
+        await insertUser({id:2,name:'Jane',age:28,city:'Paris',signup:'2023-11-20'});
+        await insertUser({id:3,name:'Jim',age:42,city:'New York',signup:'2025-03-10'});
+        await insertUser({id:4,name:'Jill',age:30,city:'London',signup:'2024-06-05'});
+        await insertOrder({order_id:101,user_id:1,amount:250,date:'2025-01-02'});
+        await insertOrder({order_id:102,user_id:2,amount:120,date:'2024-12-22'});
+        await insertOrder({order_id:103,user_id:1,amount:75,date:'2025-02-15'});
+        await insertOrder({order_id:104,user_id:4,amount:980,date:'2024-07-01'});
+
+        await new Promise(r=>setTimeout(r,500));
+
+        setSQL("SELECT * FROM users WHERE city='London' AND age > '25';");
+        await doSQL();
+
+        setSQL("SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount > '100';");
+        await doSQL();
+
+        setSQL("SELECT * FROM users WHERE name LIKE 'J%';");
+        await doSQL();
+
+        setSQL("SELECT * FROM users WHERE signup >= '2024-01-01' AND signup <= '2024-12-31';");
+        await doSQL();
+
+        setSQL("SELECT * FROM orders WHERE amount > '50' GROUP BY user_id ORDER BY amount DESC;");
+        await doSQL();
+      } catch (e) {
+        console.error("runAllExamples failure", e);
+        showMessage("runAllExamples error: "+e.message, "error");
+      }
+    }
+
+    // expose globally for inline onclicks
+    window.doSQL = doSQL;
+    window.doInsert = doInsert;
+    window.doUpdate = doUpdate;
+    window.doDelete = doDelete;
+    window.doBatch = doBatch;
+    window.runAllExamples = runAllExamples;
+    window.insertUser = insertUser;
+    window.insertOrder = insertOrder;
+    window.sendRaw = sendRaw;
+    window.setSQL = setSQL;
+
+    window.addEventListener("error", e => {
+      console.error("Uncaught error:", e);
+      showMessage("JS error: "+e.message, "error");
+    });
+  </script>
+</body>
+</html>
+

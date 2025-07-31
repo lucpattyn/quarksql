@@ -1,4 +1,4 @@
-# Crow + RocksDB SQL-ish Engine
+# QuarksSQL
 
 Lightweight, fast JSON-backed SQL-style query layer over RocksDB with:
 - In-memory secondary indexing for equality/inequality
@@ -327,4 +327,30 @@ Open it from the server origin to avoid CORS (e.g., `http://localhost:18080/test
 - **Alias usage**: Always qualify ambiguous columns in multi-table queries (`u.id` vs `o.user_id`) to avoid confusion.  
 - **Concurrency**: Inserts are fast; updates/deletes acquire a lock to synchronize index maintenance.  
 - **Extensibility**: Business logic (e.g., via embedded V8) can issue these JSON/SQL commands directly to this API for low-latency decisions.
+
+
+## Install (targetted towards Ubuntu 22.04 LTS)
+
+Follow the install guide in here up to end of Step 3
+https://github.com/lucpattyn/quarks/blob/dev/install_in_ubuntu.md
+
+
+## Build and Run
+
+# 1. Create & enter the build directory
+mkdir -p build
+cd build
+
+# 2. Configure the project (this will download Boost 1.69 if needed)
+cmake ..
+
+# 3. Compile the executable
+cmake --build . -- -j$(nproc)
+
+## Test
+
+# 1. Create a folder named templates in build folder
+
+# 2. Place the index.html file there and in browser navigate to "https://localhost:18080" to run the tests
+
 

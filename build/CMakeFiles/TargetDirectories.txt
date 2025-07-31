@@ -1,0 +1,3 @@
+/mnt/d/ubuntu/dev/quarksql/build/CMakeFiles/rebuild_cache.dir
+/mnt/d/ubuntu/dev/quarksql/build/CMakeFiles/edit_cache.dir
+/mnt/d/ubuntu/dev/quarksql/build/CMakeFiles/quarksql.dir
