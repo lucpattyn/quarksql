@@ -1,40 +1,20 @@
-// File: QueryExecutor.h
-#pragma once
-#include "SqlParser.h"
-#include <crow.h>
+// QueryExecutor.h
+#ifndef QUERYEXECUTOR_H
+#define QUERYEXECUTOR_H
 
-// safe conversion of a crow::json::rvalue to string
-static std::string rvalue_to_string(const crow::json::rvalue& v) {
-    if (!v) return "";
-    switch (v.t()) {
-        case crow::json::type::String:
-            return v.s();
-        case crow::json::type::Number: {
-            // Prefer integer representation if it's integral
-            double d = v.d();
-            int64_t i = v.i();
-            if (static_cast<double>(i) == d) {
-                return std::to_string(i);
-            } else {
-                std::ostringstream ss;
-                ss << d;
-                return ss.str();
-            }
-        }
-        case crow::json::type::True:
-            return "true";
-        case crow::json::type::False:
-            return "false";
-            
-        default:
-            // fallback: serialize complex types
-            return crow::json::dump(v);
-    }
-}
+#include "Query.h"
 
 class QueryExecutor {
 public:
-    // Execute query AST and return JSON result array (with grouping/counts if specified)
-    static crow::json::wvalue execute(const Query& q);
+    static void execute(const Query &q, QueryResult &r);
+    static void execute(std::string sql, QueryResult& r);
+private:
+    static void handleInsert(const Query&, QueryResult&);
+    static void handleUpdate(const Query&, QueryResult&);
+    static void handleDelete(const Query&, QueryResult&);
+    static void handleBatch (const Query&, QueryResult&);
+    static void handleSelect(const Query&, QueryResult&);
 };
+
+#endif // QUERYEXECUTOR_H
 

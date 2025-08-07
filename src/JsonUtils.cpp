@@ -1,71 +1,100 @@
-// File: JsonUtils.cpp
+// src/JsonUtils.cpp
 #include "JsonUtils.h"
+#include <crow/json.h>
+#include <sstream>
 #include <stdexcept>
-#include <unordered_map>
-#include <algorithm>
-#include <cctype>
-#include <ctime>
-#include <regex>
+#include <iomanip>
+#include <cmath>
 
+using crow::json::rvalue;
+using crow::json::load;
+
+// parseDate implementation
 time_t parseDate(const std::string& s) {
     std::tm tm = {};
-    if (strptime(s.c_str(), "%Y-%m-%d", &tm) == nullptr)
-        throw std::runtime_error("Bad date: " + s);
-    // treat as UTC midnight (UTC)
-    return timegm(&tm);
-}
-
-std::regex likeToRegex(const std::string& pat) {
-    std::string r = "^";
-    for (char c : pat) {
-        if (c == '%') {
-            r += ".*";
-        } else if (c == '_') {
-            r += ".";
-        } else if (std::ispunct(static_cast<unsigned char>(c))) {
-            r += '\\';
-            r += c;
-        } else {
-            r += c;
-        }
+    if (strptime(s.c_str(), "%Y-%m-%d", &tm) == nullptr) {
+        throw std::runtime_error("parseDate: invalid date format");
     }
-    r += "$";
-    return std::regex(r, std::regex::icase);
+    // Convert to time_t (UTC)
+    #ifdef _WIN32
+      return _mkgmtime(&tm);
+    #else
+      return timegm(&tm);
+    #endif
 }
 
-bool evalPredicate(const std::string& fv,
+// likeToRegex implementation
+std::regex likeToRegex(const std::string& pattern) {
+    std::string re = "^";
+    for (char c : pattern) {
+        if (c == '%')      re += ".*";
+        else if (c == '_') re += ".";
+        else if (std::isalnum(c)) re += c;
+        else re += std::string("\\") + c;
+    }
+    re += "$";
+    return std::regex(re);
+}
+
+// evalPredicate implementation
+bool evalPredicate(const std::string& fieldValue,
                    const std::string& op,
-                   const std::string& lit)
-{
-    static thread_local std::unordered_map<std::string,std::regex> regexCache;
-    bool isDate = std::regex_match(lit, std::regex(R"(\d{4}-\d{2}-\d{2})"));
-    bool isNum  = std::regex_match(lit, std::regex(R"(^-?\d+(\.\d+)?$)"));
-
-    if (op == "=")  return fv == lit;
-    if (op == "!=") return fv != lit;
-
-    if (op == "<" || op == ">") {
-        if (isNum) {
-            double a = std::stod(fv), b = std::stod(lit);
-            return (op=="<") ? a < b : a > b;
-        }
-        if (isDate) {
-            return (op=="<")
-              ? parseDate(fv) < parseDate(lit)
-              : parseDate(fv) > parseDate(lit);
-        }
-        // lexicographic fallback
-        return (op=="<") ? fv < lit : fv > lit;
-    }
-
+                   const std::string& literal) {
+    if (op == "=")  return fieldValue == literal;
+    if (op == "!=") return fieldValue != literal;
+    if (op == "<")  return fieldValue <  literal;
+    if (op == "<=") return fieldValue <= literal;
+    if (op == ">")  return fieldValue >  literal;
+    if (op == ">=") return fieldValue >= literal;
     if (op == "LIKE") {
-        auto it = regexCache.find(lit);
-        if (it == regexCache.end()) {
-            regexCache.emplace(lit, likeToRegex(lit));
-        }
-        return std::regex_match(fv, regexCache[lit]);
+        static std::regex cache; // placeholder
+        std::regex re = likeToRegex(literal);
+        return std::regex_match(fieldValue, re);
+    }
+    throw std::runtime_error("evalPredicate: unknown operator " + op);
+}
+
+// parseToMap implementation
+std::map<std::string,std::string> JsonUtils::parseToMap(const std::string& jsonStr) {
+    rvalue j = load(jsonStr);
+    if (!j || j.t() != crow::json::type::Object) {
+        throw std::runtime_error("parseToMap: invalid JSON object");
     }
 
-    throw std::runtime_error("Unknown op: " + op);
+    std::map<std::string,std::string> out;
+    for (auto it = j.begin(); it != j.end(); ++it) {
+        const std::string& key = it->key();
+        const rvalue& v = *it;
+        switch (v.t()) {
+          case crow::json::type::String:
+            out[key] = v.s();
+            break;
+          case crow::json::type::Number: {
+            // remove trailing zeros
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(6) << v.d();
+            std::string s = os.str();
+            // strip unnecessary zeros and decimal point
+            s.erase(s.find_last_not_of('0') + 1, std::string::npos);
+            if (!s.empty() && s.back()=='.') s.pop_back();
+            out[key] = s;
+            break;
+          }
+          case crow::json::type::True:
+            out[key] = "true";
+            break;
+          case crow::json::type::False:
+            out[key] = "false";
+            break;
+		  case crow::json::type::Null:
+            out[key] = "null";
+            break;
+          default:
+            // arrays/objects not flattened
+            out[key] = "";
+            break;
+        }
+    }
+    return out;
 }
 

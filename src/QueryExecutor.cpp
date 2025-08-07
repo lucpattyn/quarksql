@@ -1,200 +1,231 @@
-// File: QueryExecutor.cpp
+// QueryExecutor.cpp
 #include "QueryExecutor.h"
+#include "SqlParser.h"
 #include "DBManager.h"
 #include "IndexManager.h"
-#include "JsonUtils.h"
-
-#include <set>
-#include <map>
 #include <algorithm>
-#include <iterator>
-#include <stdexcept>
-#include <regex>
 
-using namespace std;
+static bool evalCond(const std::string &lhs,
+                     const std::string &op,
+                     const std::string &rhs)
+{
+    if (op=="=")  return lhs==rhs;
+    if (op=="!=") return lhs!=rhs;
+    if (op=="<")  return lhs<rhs;
+    if (op==">")  return lhs>rhs;
+    if (op=="<=") return lhs<=rhs;
+    if (op==">=") return lhs>=rhs;
+    if (op=="LIKE") return lhs.find(rhs)!=std::string::npos;
+    return false;
+}
 
-crow::json::wvalue QueryExecutor::execute(const Query& q) {
+void QueryExecutor::execute(const Query &q, QueryResult &r) {
+	switch (q.type) {
+      case QueryType::INSERT: handleInsert(q,r); break;
+      case QueryType::UPDATE: handleUpdate(q,r); break;
+      case QueryType::DELETE: handleDelete(q,r); break;
+      case QueryType::BATCH:  handleBatch (q,r); break;
+      case QueryType::SELECT: handleSelect(q,r); break;
+    }
+    
+    q.print();
+}
+
+void QueryExecutor::execute(std::string sql, QueryResult& r){
+	auto q = SqlParser::parse(sql);
+	execute(q, r);
+}
+
+void QueryExecutor::handleInsert(const Query &q, QueryResult &r) {
+	auto& mgr = DBManager::instance();
+    mgr.insert(q.table, q.rowData);
+    r.affected = 1;
+}
+
+void QueryExecutor::handleUpdate(const Query &q, QueryResult &r) {
     auto& mgr = DBManager::instance();
-
-    // 1. Distribute WHERE conditions per table
-    map<string, vector<CondGroup>> perTable;
-    for (const auto& grp : q.where) {
-        map<string, CondGroup> tblGroup;
-        for (const auto& cond : grp) {
-            string target;
-            for (const auto& t : q.tables) {
-                if (IndexManager::index.count(t) && IndexManager::index[t].count(cond.field)) {
-                    if (!target.empty())
-                        throw runtime_error("Ambiguous field in WHERE: " + cond.field);
-                    target = t;
-                }
-            }
-            if (target.empty() && q.tables.size() == 1)
-                target = q.tables[0];
-            if (target.empty())
-                throw runtime_error("Unknown field in WHERE: " + cond.field);
-            tblGroup[target].push_back(cond);
-        }
-        for (auto& [tbl, cg] : tblGroup)
-            perTable[tbl].push_back(cg);
+	auto keys = mgr.scan(q.table, q.conditions, 0, -1);
+    int cnt=0;
+    for (auto &k:keys) {
+        mgr.update(q.table, k, q.rowData);
+        ++cnt;
     }
+    r.affected = cnt;
+}
 
-    // 2. Candidate key sets per table
-    map<string, set<string>> tableKeys;
-    for (const auto& tbl : q.tables) {
-        set<string> candidate;
-        if (!perTable.count(tbl)) {
-            auto cf = mgr.cf(tbl);
-            if (!cf) throw runtime_error("No table: " + tbl);
-            unique_ptr<rocksdb::Iterator> it(
-                mgr.db()->NewIterator(rocksdb::ReadOptions(), cf));
-            for (it->SeekToFirst(); it->Valid(); it->Next())
-                candidate.insert(it->key().ToString());
-            tableKeys[tbl] = move(candidate);
-            continue;
-        }
-        set<string> orUnion;
-        for (const auto& grp : perTable[tbl]) {
-            set<string> andSet;
-            bool first = true;
-            for (const auto& cond : grp) {
-                set<string> thisKeys;
-                if (cond.op == "=") {
-                    for (const auto& k : IndexManager::index[tbl][cond.field][cond.value])
-                        thisKeys.insert(k);
-                } else if (cond.op == "!=") {
-                    for (const auto& [val, vec] : IndexManager::index[tbl][cond.field]) {
-                        if (val != cond.value)
-                            thisKeys.insert(vec.begin(), vec.end());
-                    }
-                } else {
-                    for (const auto& [val, vec] : IndexManager::index[tbl][cond.field]) {
-                        if (evalPredicate(val, cond.op, cond.value))
-                            thisKeys.insert(vec.begin(), vec.end());
-                    }
-                }
-                if (first) {
-                    andSet = thisKeys;
-                    first = false;
-                } else {
-                    set<string> tmp;
-                    set_intersection(andSet.begin(), andSet.end(),
-                                     thisKeys.begin(), thisKeys.end(),
-                                     inserter(tmp, tmp.begin()));
-                    andSet = move(tmp);
-                }
-            }
-            orUnion.insert(andSet.begin(), andSet.end());
-        }
-        tableKeys[tbl] = move(orUnion);
-    }
-
-    // 3. Row materialization
-    struct Row { map<string, string> vals; };
-    vector<Row> rows;
-
-    if (q.joins.empty()) {
-        const string& tbl = q.tables[0];
-        for (const auto& key : tableKeys[tbl]) {
-            string raw;
-            if (mgr.db()->Get(rocksdb::ReadOptions(), mgr.cf(tbl), key, &raw).ok()) {
-                auto js = crow::json::load(raw);
-                if (!js) continue;
-                Row r;
-                for (auto& p : js) r.vals[p.key()] = rvalue_to_string(p);
-                rows.push_back(move(r));
-            }
+void QueryExecutor::handleDelete(const Query &q, QueryResult &r) {
+    auto& mgr = DBManager::instance();
+	int cnt=0;
+    if (!q.deleteKeys.empty()) {
+        for (auto &k:q.deleteKeys) {
+            mgr.remove(q.table,k);
+            ++cnt;
         }
     } else {
-        const auto& j = q.joins[0];
-        const auto& leftTbl = j.leftTable;
-        const auto& rightTbl = j.rightTable;
-        const auto& leftField = j.leftField;
-        const auto& rightField = j.rightField;
-
-        for (const auto& lk : tableKeys[leftTbl]) {
-            string lraw;
-            if (!mgr.db()->Get(rocksdb::ReadOptions(), mgr.cf(leftTbl), lk, &lraw).ok()) continue;
-            auto ljs = crow::json::load(lraw);
-            if (!ljs) continue;
-            //string lval = ljs[leftField].s();
-            string lval = rvalue_to_string(ljs[leftField]);
-			auto it_right_keys = IndexManager::index[rightTbl][rightField].find(lval);
-            if (it_right_keys == IndexManager::index[rightTbl][rightField].end()) continue;
-            for (const auto& rk : it_right_keys->second) {
-                if (!tableKeys[rightTbl].count(rk)) continue;
-                string rraw;
-                if (!mgr.db()->Get(rocksdb::ReadOptions(), mgr.cf(rightTbl), rk, &rraw).ok()) continue;
-                auto rjs = crow::json::load(rraw);
-                if (!rjs) continue;
-                Row r;
-                for (auto& p : ljs) r.vals[leftTbl + "." + std::string(p.key())] = rvalue_to_string(p);
-                for (auto& p : rjs) r.vals[rightTbl + "." + std::string(p.key())] = rvalue_to_string(p);
-                rows.push_back(move(r));
-            }
+        auto keys = mgr.scan(q.table, q.conditions, 0, -1);
+        for (auto &k:keys) {
+            mgr.remove(q.table,k);
+            ++cnt;
         }
     }
+    r.affected = cnt;
+}
 
-    // 4. GROUP BY (COUNT)
-    if (!q.groupBy.empty()) {
-        map<vector<string>, int> counts;
-        for (const auto& row : rows) {
-            vector<string> keyVec;
-            for (const auto& fld : q.groupBy) {
-                auto it = row.vals.find(fld);
-                keyVec.push_back(it != row.vals.end() ? it->second : string());
-            }
-            counts[keyVec]++;
-        }
-        vector<Row> agg;
-        for (const auto& [kv, cnt] : counts) {
-            Row r;
-            for (size_t i = 0; i < q.groupBy.size(); ++i)
-                r.vals[q.groupBy[i]] = kv[i];
-            r.vals["count"] = to_string(cnt);
-            agg.push_back(r);
-        }
-        rows = move(agg);
+void QueryExecutor::handleBatch(const Query &q, QueryResult &r) {
+    auto& mgr = DBManager::instance();
+	int cnt=0;
+    for (auto &row:q.batchData) {
+        mgr.insert(q.table,row);
+        ++cnt;
     }
+    r.affected = cnt;
+}
 
-    // 5. ORDER BY
-    if (!q.orderBy.empty()) {
-        sort(rows.begin(), rows.end(), [&](const Row& A, const Row& B) {
-            for (const auto& os : q.orderBy) {
-                const string& f = os.field;
-                const string& av = A.vals.count(f) ? A.vals.at(f) : string();
-                const string& bv = B.vals.count(f) ? B.vals.at(f) : string();
-                if (av == bv) continue;
-                if (regex_match(av, regex(R"(^-?\d+(\.\d+)?$)")) &&
-                    regex_match(bv, regex(R"(^-?\d+(\.\d+)?$)"))) {
-                    double da = stod(av), db = stod(bv);
-                    return os.asc ? (da < db) : (da > db);
-                }
-                if (regex_match(av, regex(R"(\d{4}-\d{2}-\d{2})")) &&
-                    regex_match(bv, regex(R"(\d{4}-\d{2}-\d{2})"))) {
-                    time_t ta = parseDate(av), tb = parseDate(bv);
-                    return os.asc ? (ta < tb) : (ta > tb);
-                }
-                return os.asc ? (av < bv) : (av > bv);
+void QueryExecutor::handleSelect(const Query &q, QueryResult &r) {
+    auto& mgr = DBManager::instance();
+	// If we can push ORDER BY into an index (no joins/group/count):
+    if (q.joins.empty() && q.groupBy.empty() && !q.isCount
+        && !q.orderByField.empty()
+        && IndexManager::hasIndex(q.table,q.orderByField)
+        && q.conditions.empty())
+    {
+        auto &mmap = IndexManager::index[q.table][q.orderByField];
+        int seen=0, taken=0;
+        if (!q.orderDesc) {
+            for (auto it=mmap.begin(); it!=mmap.end(); ++it) {
+                if (seen++ < q.skip) continue;
+                r.rows.push_back({ { } });
+                r.rows.back().vals =
+                   mgr.get(q.table, it->second);
+                if (++taken==q.limit) break;
             }
-            return false;
-        });
-    }
-
-    // 6. Build JSON output
-    crow::json::wvalue out;
-    int idx = 0;
-    for (const auto& row : rows) {
-        crow::json::wvalue obj;
-        if (q.selectCols.empty()) {
-            for (const auto& [f, v] : row.vals)
-                obj[f] = v;
         } else {
-            for (const auto& f : q.selectCols)
-                obj[f] = row.vals.count(f) ? row.vals.at(f) : "";
+            for (auto it=mmap.rbegin(); it!=mmap.rend(); ++it) {
+                if (seen++ < q.skip) continue;
+                r.rows.push_back({ { } });
+                r.rows.back().vals =
+                   mgr.get(q.table, it->second);
+                if (++taken==q.limit) break;
+            }
         }
-        out[idx++] = std::move(obj);
+        r.affected = (int)r.rows.size();
+        return;
     }
-    return out;
+
+    // Generic path: scan with skip/limit
+    auto keys = mgr.scan(q.table, q.conditions, q.skip, q.limit);
+    // 1) fetch rows
+    std::vector<std::map<std::string,std::string>> rows;
+    rows.reserve(keys.size());
+    for (auto &k:keys)
+        rows.push_back(mgr.get(q.table,k));
+
+    // 2) JOINs
+    for (auto &j:q.joins) {
+        std::vector<std::map<std::string,std::string>> merged;
+        for (auto &row:rows) {
+            auto lval = row[j.leftField];
+            if (IndexManager::hasIndex(j.rightTable,j.rightField)) {
+                auto &mm = IndexManager::index[j.rightTable][j.rightField];
+                auto range = mm.equal_range(lval);
+                for (auto it=range.first; it!=range.second; ++it) {
+                    auto rd = mgr.get(j.rightTable,it->second);
+                    auto mrow = row; mrow.insert(rd.begin(),rd.end());
+                    merged.push_back(mrow);
+                }
+            } else {
+                auto all = mgr.scan(j.rightTable,{},0,-1);
+                for (auto &rk:all) {
+                    auto rd = mgr.get(j.rightTable,rk);
+                    if (rd[j.rightField]==lval) {
+                        auto mrow=row; mrow.insert(rd.begin(),rd.end());
+                        merged.push_back(mrow);
+                    }
+                }
+            }
+        }
+        rows.swap(merged);
+    }
+
+    // 3) reapply WHERE (for joins)
+    if (!q.conditions.empty()) {
+        std::vector<decltype(rows)::value_type> filt;
+        for (auto &row:rows) {
+            bool ok=true;
+            for (auto &c:q.conditions) {
+                auto key = c.key;
+                if (auto p=key.find('.'); p!=std::string::npos)
+                    key = key.substr(p+1);
+                if (!evalCond(row[key], c.op, c.value)) {
+                    ok=false; break;
+                }
+            }
+            if (ok) filt.push_back(row);
+        }
+        rows.swap(filt);
+    }
+
+    // 4) GROUP BY or COUNT or projection
+    if (!q.groupBy.empty()) {
+        std::map<std::string,int> grp;
+        auto gb = q.groupBy;
+        if (auto p=gb.find('.'); p!=std::string::npos)
+            gb = gb.substr(p+1);
+        for (auto &r0:rows) grp[r0[gb]]++;
+        for (auto &p:grp) {
+            QueryResultRow o;
+            o.vals[q.groupBy] = p.first;
+            o.vals["count"] = std::to_string(p.second);
+            r.rows.push_back(o);
+        }
+    }
+    else if (q.isCount) {
+        QueryResultRow o;
+        o.vals["count"] = std::to_string(rows.size());
+        r.rows.push_back(o);
+    }
+    else {
+        bool wild = (q.selectCols.size()==1 && q.selectCols[0]=="*");
+        for (auto &r0:rows) {
+            QueryResultRow o;
+            if (wild) {
+                for (auto &kv:r0) o.vals[kv.first]=kv.second;
+            } else {
+                for (auto &col:q.selectCols) {
+                    auto fld = col;
+                    if (auto p=fld.find('.'); p!=std::string::npos)
+                        fld = fld.substr(p+1);
+                    o.vals[col] = r0[fld];
+                }
+            }
+            r.rows.push_back(o);
+        }
+    }
+
+    // 5) ORDER BY (if not optimized above)
+    if (!q.orderByField.empty()) {
+        auto fld=q.orderByField;
+        if (auto p=fld.find('.'); p!=std::string::npos)
+            fld=fld.substr(p+1);
+        std::sort(r.rows.begin(),r.rows.end(),
+          [&](auto &a,auto &b) {
+            return q.orderDesc
+              ? b.vals[fld] < a.vals[fld]
+              : a.vals[fld] < b.vals[fld];
+          });
+    }
+
+    // 6) SKIP/LIMIT if not already applied
+    if (!q.joins.empty() || !q.groupBy.empty() || q.isCount) {
+        auto &v = r.rows;
+        int start = std::min((int)v.size(), q.skip);
+        int end   = (q.limit>=0)
+                    ? std::min((int)v.size(), start+q.limit)
+                    : (int)v.size();
+        std::vector<QueryResultRow> slice(v.begin()+start, v.begin()+end);
+        r.rows.swap(slice);
+    }
+
+    r.affected = (int)r.rows.size();
 }
 

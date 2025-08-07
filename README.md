@@ -1,356 +1,101 @@
-# QuarksSQL
+# Quarksql
 
-Lightweight, fast JSON-backed SQL-style query layer over RocksDB with:
-- In-memory secondary indexing for equality/inequality
-- SQL-style `SELECT`, `WHERE` (with `AND`/`OR`), `LIKE`, range, date comparisons
-- `JOIN` (multiple, inner and left), `GROUP BY`, `ORDER BY`
-- `INSERT`/`UPDATE`/`DELETE`/`BATCH` with atomic semantics
-- Alias support and basic query planning
-- Simple key generation with special `id` handling
-- Designed to embed with business logic (e.g., V8) for low-latency on-machine querying
+Quarksql is a **lightweight, embeddable SQL‑like engine for C++** running on top of **RocksDB**, with a **Crow** HTTP API server, **V8** JavaScript integration, **JWT authentication**, and **JSON-based schemas** supporting in‑memory secondary indexing.
 
-## Table of Contents
+## ✨ Features
 
-- [Server Endpoint](#server-endpoint)  
-- [Key Concepts](#key-concepts)  
-- [API Commands](#api-commands)  
-  - [Insert](#insert)  
-  - [Select SQL](#select-sql)  
-  - [Update](#update)  
-  - [Delete](#delete)  
-  - [Batch](#batch)  
-- [SQL Features](#sql-features)  
-  - [WHERE with AND / OR](#where-with-and--or)  
-  - [LIKE and Range](#like-and-range)  
-  - [JOINs (inner / left -- multiple)](#joins-inner--left----multiple)  
-  - [GROUP BY / ORDER BY](#group-by--order-by)  
-  - [Alias Resolution](#alias-resolution)  
-- [Key Generation Logic](#key-generation-logic)  
-- [Example cURL Requests](#example-curl-requests)  
-- [JavaScript Test Harness](#javascript-test-harness)  
-- [Error Handling](#error-handling)  
-- [Best Practices & Notes](#best-practices--notes)
+- **SQL syntax**: SELECT (WHERE, LIKE, ranges, JOIN, GROUP BY, ORDER BY, COUNT, SKIP, LIMIT), INSERT, UPDATE, DELETE, BATCH.
+- **RocksDB**: One column family per table for efficient isolation and scanning.
+- **IndexManager**: Maintains in-memory multimap indices for fast equality lookups and joins.
+- **Push-down pagination**: SKIP/LIMIT applied during RocksDB iteration.
+- **V8 JS logic**: Hooks in `scripts/business.js`, `auth.js`, `sanitize.js`.
+- **Crow HTTP + JWT**: REST API plus interactive web UI from `public/index.html`.
 
----
-
-## Server Endpoint
-
-All requests are POSTed to:
+## 📦 Structure
 
 ```
-/query
+/src        → C++ source
+/include    → C++ headers
+/public     → index.html console
+/scripts    → business/auth/sanitize JS
+schemas.json
 ```
 
-(If the server runs on `http://localhost:18080`, full URL is `http://localhost:18080/query`.)
+After building, copy `schemas.json`, `scripts/`, and `public/` into `build/`.
 
-Content-Type must be `application/json`.
+## ⚙️ Install & Build (Ubuntu 22.04)
 
----
-
-## Key Concepts
-
-### Data Storage
-- Rows are stored as JSON objects in RocksDB column families (each table is a column family).
-- Secondary in-memory index: `index[table][field][value] -> list of keys` accelerates `field = 'x'` and `field != 'x'` queries.
-
-### Key Generation
-- If the JSON has `"id": <number>`, that number (as string) is used as the primary key.
-- Otherwise the entire JSON is canonicalized (concatenated) and hashed to produce a unique key.
-  - Example: `{ "name":"Alice", "age":27 }` → hash of `name=Alice;age=27;` string.
-
----
-
-## API Commands
-
-### Insert
-
-Insert a record into a table. Creates the column family if missing.
-
-**Payload:**
-```json
-{
-  "command": "insert",
-  "table": "users",
-  "data": {
-    "id": 1,
-    "name": "John",
-    "age": 35,
-    "city": "London",
-    "signup": "2024-01-15"
-  }
-}
-```
-
-**Response Example:**
-```json
-{
-  "status": "inserted",
-  "key": "1"
-}
-```
-
-### Select SQL
-
-Run an SQL-style query. Supports `SELECT`, `FROM`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`.
-
-**Payload:**
-```json
-{
-  "command": "select_sql",
-  "sql": "SELECT * FROM users WHERE age > '30' AND name LIKE 'J%';"
-}
-```
-
-**Response:** Array of JSON objects matching the query.
-
-### Update
-
-Update rows matching a `WHERE` clause. Uses same condition syntax as `SELECT`.
-
-**Payload:**
-```json
-{
-  "command": "update",
-  "table": "users",
-  "where": "name='John'",
-  "data": {
-    "city": "Amsterdam"
-  }
-}
-```
-
-**Response Example:**
-```json
-{
-  "status": "updated",
-  "count": 1
-}
-```
-
-### Delete
-
-Delete rows matching a `WHERE` clause.
-
-**Payload:**
-```json
-{
-  "command": "delete",
-  "table": "users",
-  "where": "age<'30'"
-}
-```
-
-**Response Example:**
-```json
-{
-  "status": "deleted",
-  "count": 2
-}
-```
-
-### Batch
-
-Atomic batch of mixed operations. If one write fails, the entire batch does not commit.
-
-**Payload Example:**
-```json
-{
-  "command": "batch",
-  "commands": [
-    { "command": "insert", "table": "users", "data": { "id": 6, "name": "Bob", "age": 33 } },
-    { "command": "update", "table": "users", "where": "id='6'", "data": { "city": "Oslo" } }
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "status": "batch ok"
-}
-```
-
----
-
-## SQL Features
-
-### WHERE with AND / OR
-
-Supports boolean combinations. OR is top-level; AND groups are intersected.
-
-```sql
-SELECT * FROM users WHERE city='London' AND age > '25' OR city='Paris';
-```
-
-Meaning:
-```
-(city = 'London' AND age > 25) OR (city = 'Paris')
-```
-
-### LIKE and Range
-
-```sql
-SELECT * FROM users WHERE name LIKE 'J%';                -- prefix match
-SELECT * FROM users WHERE age >= '30' AND age <= '40';    -- numeric range
-SELECT * FROM users WHERE signup >= '2024-01-01' AND signup <= '2024-12-31';  -- date range (ISO format)
-```
-
-`LIKE` is case-insensitive prefix/suffix support depending on implementation; typically `'J%'` matches values starting with `J`.
-
-### JOINs (inner / left -- multiple)
-
-Supports multiple equi-joins with aliasing. Inner and left join syntax:
-
-```sql
-SELECT u.name, o.amount
-FROM users u
-JOIN orders o ON u.id = o.user_id
-WHERE o.amount > '100';
-
-SELECT u.name, o.amount
-FROM users u
-LEFT JOIN orders o ON u.id = o.user_id
-WHERE u.city='London';
-```
-
-Multiple joins are allowed in sequence:
-```sql
-SELECT * FROM a
-JOIN b ON a.id = b.a_id
-JOIN c ON b.id = c.b_id
-WHERE ...
-```
-
-### GROUP BY / ORDER BY
-
-```sql
-SELECT * FROM orders WHERE amount > '50' GROUP BY user_id ORDER BY amount DESC;
-SELECT * FROM users WHERE age > '20' ORDER BY age ASC;
-```
-
-### Alias Resolution
-
-You can alias tables and refer to their columns in filters:
-
-```sql
-SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE o.date >= '2025-01-01';
-```
-
-The parser normalizes `u` and `o` to real table names internally.
-
----
-
-## Key Generation Logic
-
-The `generate_key` function:
-
-```cpp
-std::string generate_key(const crow::json::rvalue& data) {
-    if (data.has("id") && data["id"].t() == crow::json::type::Number)
-        return std::to_string(data["id"].i());
-    // fallback: hash of serialized content
-}
-```
-
-- Numeric `id` becomes the key: stable for updates.
-- Otherwise, a hash of the full object is used (canonical serialization).
-
----
-
-## Example cURL Requests
-
-Insert:
 ```bash
-curl -X POST http://localhost:18080/query   -H "Content-Type: application/json"   -d '{"command":"insert","table":"users","data":{"id":1,"name":"John","age":35,"city":"London","signup":"2024-01-15"}}'
-```
-
-Select with WHERE:
-```bash
-curl -X POST http://localhost:18080/query   -H "Content-Type: application/json"   -d '{"command":"select_sql","sql":"SELECT * FROM users WHERE age > \'30\' AND name LIKE \'J%\';"}'
-```
-
-Join:
-```bash
-curl -X POST http://localhost:18080/query   -H "Content-Type: application/json"   -d '{"command":"select_sql","sql":"SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount > \'100\';"}'
-```
-
-Update:
-```bash
-curl -X POST http://localhost:18080/query   -H "Content-Type: application/json"   -d '{"command":"update","table":"users","where":"name=\'John\'","data":{"city":"Amsterdam"}}'
-```
-
-Delete:
-```bash
-curl -X POST http://localhost:18080/query   -H "Content-Type: application/json"   -d '{"command":"delete","table":"users","where":"age<\'30\'"}'
-```
-
-Batch:
-```bash
-curl -X POST http://localhost:18080/query   -H "Content-Type: application/json"   -d '{
-    "command":"batch",
-    "commands":[
-      {"command":"insert","table":"users","data":{"id":10,"name":"Zoe","age":26}},
-      {"command":"update","table":"users","where":"id=\'10\'","data":{"city":"Lisbon"}}
-    ]
-  }'
-```
-
----
-
-## JavaScript Test Harness
-
-There is a standalone `test.html` (single page) that:
-- Lets you run all the above operations
-- Provides example scenarios (inserts, joins, range, like, group/order)
-- Displays results in a dynamic table
-- Has endpoint override input for cross-origin testing
-
-Open it from the server origin to avoid CORS (e.g., `http://localhost:18080/test.html`).
-
----
-
-## Error Handling
-
-- **Invalid SQL / parse errors**: returns JSON with `{"error":"..."}`
-- **Parenthesis errors**: be sure your input has balanced parentheses (quotes are ignored by the robust checker).
-- **Type issues**: code uses safe JSON extraction helpers to avoid `.s()` on non-string types.
-- **Batch atomicity**: if any write in a batch fails, the entire batch is rejected (error will be returned).
-
----
-
-## Best Practices & Notes
-
-- **Use numeric `id` when possible** for stable keys and easier updates. You can extend to string IDs if desired.  
-- **Date fields** should be ISO-formatted (`YYYY-MM-DD`) so lexicographical comparisons work for ranges.  
-- **Indexes** only accelerate equality/inequality; `LIKE` and ranges currently scan. You can extend indexing structures for prefix/range if needed.  
-- **Joins** currently support inner and left equi-joins. For outer semantics ensure your executor interprets `JoinType`.  
-- **Alias usage**: Always qualify ambiguous columns in multi-table queries (`u.id` vs `o.user_id`) to avoid confusion.  
-- **Concurrency**: Inserts are fast; updates/deletes acquire a lock to synchronize index maintenance.  
-- **Extensibility**: Business logic (e.g., via embedded V8) can issue these JSON/SQL commands directly to this API for low-latency decisions.
-
-
-## Install (targetted towards Ubuntu 22.04 LTS)
-
-Follow the install guide in here up to end of Step 3
-https://github.com/lucpattyn/quarks/blob/dev/install_in_ubuntu.md
-
-
-## Build and Run
-
-**1. Create & enter the build directory
-mkdir -p build
-cd build
-
-**2. Configure the project (this will download Boost 1.69 if needed)
-cmake ..
-
-**3. Compile the executable
+sudo apt update
+sudo apt install -y build-essential cmake librocksdb-dev libv8-dev libv8-headers libssl-dev
+git clone https://github.com/lucpattyn/quarksql.git
+cd quarksql
+mkdir build && cd build
+cmake .. -DCMAKE_CXX_STANDARD=17
 cmake --build . -- -j$(nproc)
+```
 
-## Test
+Then copy into `build/`:
+- `schemas.json`
+- `scripts/`
+- `public/`
 
-**1. Create a folder named templates in build folder
+## 🚀 Run
 
-**2. Place the index.html file there and in browser navigate to "https://localhost:18080" to run the tests
+```bash
+./quarksql-server --dbpath ./data --port 18080 --jwt-secret mysecret
+```
 
+Visit `http://localhost:18080/` for the interactive console.
 
+## 🌐 REST API
+
+All endpoints are POST `/api/<function>` with JSON.
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/login` | `{username,password}` → `{token}` |
+| `/api/verify` | `{token}` → validity |
+| `/api/query` | Run SELECT |
+| `/api/execute` | Run INSERT/UPDATE/DELETE/BATCH |
+
+## ✅ Supported SQL
+
+### SELECT
+```sql
+SELECT * FROM users;
+SELECT * FROM products WHERE price > '20';
+SELECT * FROM products ORDER BY stock DESC SKIP 1 LIMIT 3;
+SELECT COUNT(*) FROM orders;
+SELECT user, COUNT(*) FROM orders GROUP BY user ORDER BY COUNT DESC;
+SELECT orders.id, users.email FROM orders JOIN users ON orders.user = users.email;
+```
+
+### INSERT
+```sql
+INSERT INTO users VALUES {"email":"alice@example.com","password":"secret"};
+```
+
+### UPDATE
+```sql
+UPDATE users SET {"password":"newsecret"} WHERE email='alice@example.com';
+```
+
+### DELETE
+```sql
+DELETE FROM users WHERE email='alice@example.com';
+DELETE FROM users KEYS ["alice@example.com"];
+```
+
+### BATCH
+```sql
+BATCH products {"p1":{"id":"p1","name":"Widget"},"p2":{"id":"p2","name":"Gadget"}};
+```
+
+## 🧪 Interactive Console
+
+`public/index.html` provides ready-to-run query examples for SELECT, AGGREGATION, JOIN, and WRITE commands.
+
+## 📄 License
+
+MIT

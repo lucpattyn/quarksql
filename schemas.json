@@ -1,0 +1,40 @@
+{
+  "default": {
+  	"indexedFields": {
+      "id": "string"
+   }
+  },
+   
+  "users": { 
+  	"indexedFields": { 
+	  	"email": "string", 
+		"password": "string" 
+	} 
+  },
+  
+  "journal": { 
+  	"indexedFields": { 
+	  	"date": "date", 
+		"description": "string" 
+	} 
+  },
+  
+  "products": {
+    "indexedFields": {
+      "id": "string",
+      "name": "string",
+      "price": "number",
+      "stock": "number"
+    }
+  },
+  "orders": {
+    "indexedFields": {
+      "id": "string",
+      "user": "string",
+      "productId": "string",
+      "qty": "number",
+      "date": "date"
+    }
+  }
+}
+

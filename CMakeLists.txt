@@ -53,7 +53,9 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/third-party/crow/include
     ${Boost_INCLUDE_DIRS}
     ${ROCKSDB_INCLUDE_DIR}
+     /usr/include/v8
 )
+
 
 # Gather all .cpp sources
 file(GLOB QUARKSQL_SOURCES
@@ -73,5 +75,6 @@ target_link_libraries(quarksql PRIVATE
     ssl
     crypto
     Threads::Threads
+    -lv8
 )
 
