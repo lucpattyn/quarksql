@@ -23,11 +23,26 @@ schemas.json
 
 After building, copy `schemas.json`, `scripts/`, and `public/` into `build/`.
 
-## ⚙️ Install & Build (Ubuntu 22.04)
+---
+
+## 📦 Build & Run
+
+### Install Dependencies (Ubuntu 22.04)
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake librocksdb-dev libv8-dev libv8-headers libssl-dev
+sudo apt install -y build-essential cmake librocksdb-dev libv8-dev
+```
+
+```
+ Boost 1.69 needs to be installed because the webserver runs on Crow C++
+  *If you face trouble compiling this project then following link has full instructions. (ZeroMQ not used in this project, so ignore).
+```
+Boost download instractions can be found [here](https://dev.to/lucpattyn/install-quarks-in-ubuntu-2004-and-above-1fcf)
+
+### Build
+
+```bash
 git clone https://github.com/lucpattyn/quarksql.git
 cd quarksql
 mkdir build && cd build
@@ -35,16 +50,17 @@ cmake .. -DCMAKE_CXX_STANDARD=17
 cmake --build . -- -j$(nproc)
 ```
 
-Then copy into `build/`:
+### Prepare `build/` directory
+Copy:
 - `schemas.json`
-- `scripts/`
-- `public/`
+- `public/` (contains `index.html`)
+- `scripts/` (`business.js`, `auth.js`, `sanitize.js`)
 
-## 🚀 Run
+### Run
 
 ```bash
-./quarksql-server --dbpath ./data --port 18080 --jwt-secret mysecret
-```
+./quarksql
+---
 
 Visit `http://localhost:18080/` for the interactive console.
 
@@ -209,46 +225,6 @@ module.exports = api;
    ```
    JS sanitizes the SQL, calls `CppQuery` (C++ parses → executes → returns JSON string), JS parses it and returns to HTTP.
 
----
-
-## 📦 Build & Run
-
-### Install Dependencies (Ubuntu 22.04)
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake librocksdb-dev libv8-dev
-```
-
-```
- Boost 1.69 needs to be installed because the webserver runs on Crow C++
-  *If you face trouble compiling this project then following link has full instructions. (ZeroMQ not used in this project, so ignore).
-```
-Boost download instractions can be found [here](https://dev.to/lucpattyn/install-quarks-in-ubuntu-2004-and-above-1fcf)
-
-### Build
-
-```bash
-git clone https://github.com/lucpattyn/quarksql.git
-cd quarksql
-mkdir build && cd build
-cmake .. -DCMAKE_CXX_STANDARD=17
-cmake --build . -- -j$(nproc)
-```
-
-### Prepare `build/` directory
-Copy:
-- `schemas.json`
-- `public/` (contains `index.html`)
-- `scripts/` (`business.js`, `auth.js`, `sanitize.js`)
-
-### Run
-
-```bash
-./quarksql-server --dbpath ./data --port 18080 --jwt-secret mysecret
-```
-
----
 
 ## 🌐 API Overview
 
@@ -277,4 +253,5 @@ MIT
 ## 📄 License
 
 MIT
+
 
