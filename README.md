@@ -62,9 +62,8 @@ Copy:
 ```bash
 ./quarksql
 ```
----
-
 Visit `http://localhost:18080/` for the interactive console.
+---
 
 ## 🌐 REST API
 
@@ -255,6 +254,7 @@ MIT
 ## 📄 License
 
 MIT
+
 
 
 
