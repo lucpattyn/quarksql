@@ -217,7 +217,13 @@ module.exports = api;
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake librocksdb-dev                     libv8-dev libv8-headers libssl-dev                     nlohmann-json3-dev
+sudo apt install -y build-essential cmake librocksdb-dev libv8-dev
+```
+
+```
+ Boost 1.69 needs to be installed because the webserver runs on Crow C++
+ Boost download instractions can be found [here](https://dev.to/lucpattyn/install-quarks-in-ubuntu-2004-and-above-1fcf)
+ *If you face trouble compiling this project then this link has full instructions. (ZeroMQ not used in this project, so ignore).
 ```
 
 ### Build
