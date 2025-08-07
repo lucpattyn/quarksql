@@ -174,10 +174,10 @@ It’s implemented in JavaScript, runs inside V8 embedded in the Quarksql proces
 ### Example: `business.js` (simplified)
 
 ```js
-const auth = require('auth');
 const sanitize = require('sanitize');
+const auth     = require('auth');
 
-globalThis.api = {};
+var api = api || {};
 
 api.login = (username, password) => {
   sanitize.credentials(username, password);
@@ -254,6 +254,7 @@ MIT
 ## 📄 License
 
 MIT
+
 
 
 
