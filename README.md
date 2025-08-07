@@ -251,9 +251,6 @@ module.exports = api;
 
 MIT
 
-## 📄 License
-
-MIT
 
 
 
