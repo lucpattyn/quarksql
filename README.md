@@ -174,33 +174,64 @@ It’s implemented in JavaScript, runs inside V8 embedded in the Quarksql proces
 ### Example: `business.js` (simplified)
 
 ```js
+// scripts/business.js
+
 const sanitize = require('sanitize');
 const auth     = require('auth');
 
 var api = api || {};
 
-api.login = (username, password) => {
-  sanitize.credentials(username, password);
-  const claims = { sub: username, iat: Date.now()/1000 };
-  return { token: CppSignJwt(JSON.stringify(claims)) };
+// — LOGIN —
+api.login = {
+  params: ['username','password'],
+  handler: function(params) {
+    sanitize.checkParams(params, this.params);
+    const token = auth.login(params.username, params.password);
+    return { token };
+  }
 };
 
-api.verify = (token) => {
-  const payload = CppVerifyJwt(token);
-  return { valid: true, data: JSON.parse(payload) };
+// — VERIFY —
+api.verify = {
+  params: ['token'],
+  handler: function(params) {
+    sanitize.checkParams(params, this.params);
+    const payloadJson = auth.verify(params.token);
+    return { data: JSON.parse(payloadJson) };
+  }
 };
 
-api.query = (sql) => {
-  sanitize.sql(sql);
-  return JSON.parse(CppQuery(sql));
+// — LIST —
+api.list = {
+  params: [],
+  handler: function() {
+    return Object.keys(api).map(fn => ({
+      name: fn,
+      params: api[fn].params
+    }));
+  }
 };
 
-api.execute = (sql) => {
-  sanitize.sql(sql);
-  return JSON.parse(CppExecute(sql));
+// — RUN A SELECT QUERY —
+api.query = {
+  params: ['sql'],
+  handler: function(params) {
+    sanitize.checkParams(params, this.params);
+    // db.query is your C++ binding
+    return db.query(params.sql);
+  }
 };
 
-module.exports = api;
+// — EXECUTE A WRITE (INSERT/UPDATE/DELETE) —
+api.execute = {
+  params: ['sql'],
+  handler: function(params) {
+    sanitize.checkParams(params, this.params);
+    // db.execute returns { success: true } or { success: false, error: ... }
+    return db.execute(params.sql);
+  }
+};
+
 ```
 
 ---
@@ -250,6 +281,7 @@ module.exports = api;
 ## 📄 License
 
 MIT
+
 
 
 
