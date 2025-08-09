@@ -112,8 +112,25 @@ void QueryExecutor::handleSelect(const Query &q, QueryResult &r) {
         return;
     }
 
-    // Generic path: scan with skip/limit
-    auto keys = mgr.scan(q.table, q.conditions, q.skip, q.limit);
+    // Generic path: separate base-table conditions from joined-table ones
+    std::vector<Condition> baseConds;
+    std::vector<Condition> postConds;
+    for (auto &c : q.conditions) {
+        auto dot = c.key.find('.');
+        if (dot == std::string::npos) {
+            baseConds.push_back(c);
+        } else {
+            std::string qual = c.key.substr(0, dot);
+            std::string field = c.key.substr(dot+1);
+            if (qual == q.table) {
+                Condition cc = c; cc.key = field; baseConds.push_back(cc);
+            } else {
+                postConds.push_back(c);
+            }
+        }
+    }
+    // Scan base table with only base conditions
+    auto keys = mgr.scan(q.table, baseConds, q.skip, q.limit);
     // 1) fetch rows
     std::vector<std::map<std::string,std::string>> rows;
     rows.reserve(keys.size());
@@ -124,7 +141,8 @@ void QueryExecutor::handleSelect(const Query &q, QueryResult &r) {
     for (auto &j:q.joins) {
         std::vector<std::map<std::string,std::string>> merged;
         for (auto &row:rows) {
-            auto lval = row[j.leftField];
+            auto lval = row.count(j.leftField) ? row.at(j.leftField) : std::string();
+            bool matched = false;
             if (IndexManager::hasIndex(j.rightTable,j.rightField)) {
                 auto &mm = IndexManager::index[j.rightTable][j.rightField];
                 auto range = mm.equal_range(lval);
@@ -132,6 +150,7 @@ void QueryExecutor::handleSelect(const Query &q, QueryResult &r) {
                     auto rd = mgr.get(j.rightTable,it->second);
                     auto mrow = row; mrow.insert(rd.begin(),rd.end());
                     merged.push_back(mrow);
+                    matched = true;
                 }
             } else {
                 auto all = mgr.scan(j.rightTable,{},0,-1);
@@ -140,19 +159,24 @@ void QueryExecutor::handleSelect(const Query &q, QueryResult &r) {
                     if (rd[j.rightField]==lval) {
                         auto mrow=row; mrow.insert(rd.begin(),rd.end());
                         merged.push_back(mrow);
+                        matched = true;
                     }
                 }
+            }
+            if (!matched && j.type==Join::LEFT) {
+                // Preserve left row even if no right match
+                merged.push_back(row);
             }
         }
         rows.swap(merged);
     }
 
-    // 3) reapply WHERE (for joins)
-    if (!q.conditions.empty()) {
+    // 3) reapply WHERE (for joins and any qualified conditions)
+    if (!postConds.empty()) {
         std::vector<decltype(rows)::value_type> filt;
         for (auto &row:rows) {
             bool ok=true;
-            for (auto &c:q.conditions) {
+            for (auto &c:postConds) {
                 auto key = c.key;
                 if (auto p=key.find('.'); p!=std::string::npos)
                     key = key.substr(p+1);
@@ -165,25 +189,57 @@ void QueryExecutor::handleSelect(const Query &q, QueryResult &r) {
         rows.swap(filt);
     }
 
-    // 4) GROUP BY or COUNT or projection
+    // 4) GROUP BY with aggregates or COUNT or projection
     if (!q.groupBy.empty()) {
-        std::map<std::string,int> grp;
         auto gb = q.groupBy;
         if (auto p=gb.find('.'); p!=std::string::npos)
             gb = gb.substr(p+1);
-        for (auto &r0:rows) grp[r0[gb]]++;
-        for (auto &p:grp) {
-            QueryResultRow o;
-            o.vals[q.groupBy] = p.first;
-            o.vals["count"] = std::to_string(p.second);
-            r.rows.push_back(o);
+
+        // If SUM aggregates are requested, compute them per group
+        if (!q.aggs.empty()) {
+            struct AggAcc { std::unordered_map<std::string,double> sums; };
+            std::map<std::string, AggAcc> accs;
+            for (auto &r0:rows) {
+                std::string key = r0[gb];
+                auto &acc = accs[key];
+                for (auto &a : q.aggs) {
+                    // Support qualified names in aggregates (e.g., l.debit)
+                    auto fld = a.field;
+                    if (auto p=fld.find('.'); p!=std::string::npos) fld = fld.substr(p+1);
+                    double v = 0.0; try { v = std::stod(r0.count(fld)? r0.at(fld) : std::string()); } catch (...) { v = 0.0; }
+                    acc.sums[a.alias.empty()? a.field : a.alias] += v;
+                }
+            }
+            for (auto &kv : accs) {
+                QueryResultRow o;
+                o.vals[gb] = kv.first;
+                for (auto &s : kv.second.sums) {
+                    o.vals[s.first] = std::to_string(s.second);
+                }
+                r.rows.push_back(o);
+            }
+            if (!q.orderByField.empty()) {
+                auto fld = q.orderByField;
+                if (auto p=fld.find('.'); p!=std::string::npos)
+                    fld = fld.substr(p+1);
+                std::sort(r.rows.begin(), r.rows.end(), [&](const auto &A, const auto &B){
+                    const auto &va = A.vals.count(fld) ? A.vals.at(fld) : std::string();
+                    const auto &vb = B.vals.count(fld) ? B.vals.at(fld) : std::string();
+                    return q.orderDesc ? (va > vb) : (va < vb);
+                });
+            }
+        } else {
+            std::map<std::string,int> grp;
+            for (auto &r0:rows) grp[r0[gb]]++;
+            for (auto &p:grp) {
+                QueryResultRow o;
+                o.vals[gb] = p.first;
+                o.vals["count"] = std::to_string(p.second);
+                r.rows.push_back(o);
+            }
         }
     }
-    else if (q.isCount) {
-        QueryResultRow o;
-        o.vals["count"] = std::to_string(rows.size());
-        r.rows.push_back(o);
-    }
+
     else {
         bool wild = (q.selectCols.size()==1 && q.selectCols[0]=="*");
         for (auto &r0:rows) {
@@ -228,4 +284,3 @@ void QueryExecutor::handleSelect(const Query &q, QueryResult &r) {
 
     r.affected = (int)r.rows.size();
 }
-

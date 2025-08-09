@@ -9,11 +9,36 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Enable threading
 find_package(Threads REQUIRED)
 
-# Try to find Boost 1.69.0 in the system
-set(Boost_USE_STATIC_LIBS OFF)
-find_package(Boost 1.69.0 EXACT COMPONENTS system QUIET)
+# Prefer a local copy of Boost.System from libs/thirdparties
+set(_LOCAL_BOOST_LIBDIR "${PROJECT_SOURCE_DIR}/libs/thirdparties")
+set(_LOCAL_BOOST_SYSTEM_CANDIDATES
+    "${_LOCAL_BOOST_LIBDIR}/libboost_system.so"
+    "${_LOCAL_BOOST_LIBDIR}/libboost_system.so.1.69.0"
+    "${_LOCAL_BOOST_LIBDIR}/libboost_system.dylib"
+    "${_LOCAL_BOOST_LIBDIR}/boost_system.lib"
+)
+foreach(_cand IN LISTS _LOCAL_BOOST_SYSTEM_CANDIDATES)
+    if(EXISTS "${_cand}")
+        add_library(Boost::system UNKNOWN IMPORTED)
+        set_target_properties(Boost::system PROPERTIES IMPORTED_LOCATION "${_cand}")
+        # Use local Boost headers if present
+        if(EXISTS "${PROJECT_SOURCE_DIR}/third-party/includes/boost")
+            set_target_properties(Boost::system PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/third-party/includes")
+        endif()
+        set(Boost_FOUND TRUE)
+        set(_QUARKSQL_USING_LOCAL_BOOST TRUE)
+        message(STATUS "Using local Boost::system from ${_cand}")
+        break()
+    endif()
+endforeach()
 
-# If Boost not found, download and build it
+# If no local copy, try to find Boost 1.69.0 in the system
+if(NOT Boost_FOUND)
+    set(Boost_USE_STATIC_LIBS OFF)
+    find_package(Boost 1.69.0 EXACT COMPONENTS system QUIET)
+endif()
+
+# If Boost still not found, download and build it
 if(NOT Boost_FOUND)
     include(ExternalProject)
     ExternalProject_Add(
@@ -47,10 +72,11 @@ if(NOT ROCKSDB_INCLUDE_DIR OR NOT ROCKSDB_LIBRARY)
     message(FATAL_ERROR "RocksDB not found. Please install librocksdb-dev.")
 endif()
 
-# Include directories for headers
+# Include directories for headers (prefer local Boost headers first)
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/third-party/crow/include
+    ${PROJECT_SOURCE_DIR}/third-party/includes
     ${Boost_INCLUDE_DIRS}
     ${ROCKSDB_INCLUDE_DIR}
      /usr/include/v8
@@ -68,6 +94,9 @@ if(TARGET boost_ext)
     add_dependencies(quarksql boost_ext)
 endif()
 
+# Ensure the runtime can locate local third-party libs during build/run
+set_target_properties(quarksql PROPERTIES BUILD_RPATH "${PROJECT_SOURCE_DIR}/libs/thirdparties")
+
 # Link against Boost.System, RocksDB, OpenSSL, and pthread
 target_link_libraries(quarksql PRIVATE
     Boost::system
@@ -77,4 +106,3 @@ target_link_libraries(quarksql PRIVATE
     Threads::Threads
     -lv8
 )
-

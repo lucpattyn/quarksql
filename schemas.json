@@ -4,37 +4,82 @@
       "id": "string"
    }
   },
-   
-  "users": { 
-  	"indexedFields": { 
-	  	"email": "string", 
-		"password": "string" 
-	} 
-  },
-  
-  "journal": { 
-  	"indexedFields": { 
-	  	"date": "date", 
-		"description": "string" 
-	} 
-  },
-  
-  "products": {
-    "indexedFields": {
-      "id": "string",
-      "name": "string",
-      "price": "number",
-      "stock": "number"
-    }
-  },
-  "orders": {
-    "indexedFields": {
-      "id": "string",
-      "user": "string",
-      "productId": "string",
-      "qty": "number",
-      "date": "date"
+
+  "tables": {
+    "users": {
+      "primary_key": "username",
+      "indexed_fields": [
+        "username",
+        "created_at"
+      ],
+      "schema": {
+        "username": "string",
+        "password_hash": "string",
+        "salt": "string",
+        "created_at": "string",
+        "role": "string"
+      }
+    },
+    "projects": {
+      "primary_key": "id",
+      "indexed_fields": [
+        "name"
+      ],
+      "schema": {
+        "id": "string",
+        "name": "string",
+        "created_by": "string",
+        "created_at": "string"
+      }
+    },
+    "accounts": {
+      "primary_key": "id",
+      "indexed_fields": [
+        "project_id",
+        "code",
+        "type",
+        "is_active"
+      ],
+      "schema": {
+        "id": "string",
+        "project_id": "string",
+        "code": "string",
+        "name": "string",
+        "type": "string",
+        "is_active": "bool"
+      }
+    },
+    "journal_entries": {
+      "primary_key": "id",
+      "indexed_fields": [
+        "project_id",
+        "date"
+      ],
+      "schema": {
+        "id": "string",
+        "project_id": "string",
+        "date": "string",
+        "memo": "string",
+        "created_by": "string",
+        "created_at": "string"
+      }
+    },
+    "journal_lines": {
+      "primary_key": "id",
+      "indexed_fields": [
+        "entry_id",
+        "project_id",
+        "account_code"
+      ],
+      "schema": {
+        "id": "string",
+        "entry_id": "string",
+        "project_id": "string",
+        "line_no": "number",
+        "account_code": "string",
+        "debit": "number",
+        "credit": "number"
+      }
     }
   }
 }
-

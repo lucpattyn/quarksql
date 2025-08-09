@@ -65,9 +65,15 @@ void DBManager::insert(const std::string &table,
 {
     // serialize to JSON
     json j(row);
-    // pick primary key = first map key (lex order: "email" for users, "id" elsewhere)
-    auto it = row.begin();
-    std::string key = it->second;
+    // Prefer explicit 'id' field as primary key if present
+    std::string key;
+    if (auto itId = row.find("id"); itId != row.end()) {
+        key = itId->second;
+    } else {
+        // Fallback: first map key's value (legacy behavior)
+        auto it = row.begin();
+        key = (it == row.end()) ? std::string() : it->second;
+    }
     _db->Put(rocksdb::WriteOptions(), cf(table), key, j.dump());
 }
 

@@ -29,10 +29,18 @@ struct Condition {
 
 // One JOIN clause
 struct Join {
-    std::string leftTable;
+    enum Type { INNER, LEFT } type = INNER;
+    std::string leftTable;   // resolved table name (not alias)
     std::string leftField;
-    std::string rightTable;
+    std::string rightTable;  // resolved table name (not alias)
     std::string rightField;
+};
+
+// Aggregation spec
+struct AggSpec {
+    enum Type { SUM } type = SUM;
+    std::string field;   // e.g. debit
+    std::string alias;   // e.g. debit (from "AS debit"), optional
 };
 
 // Parsed query representation
@@ -44,11 +52,12 @@ struct Query {
     std::map<std::string, std::string> rowData;
     // For BATCH
     std::vector<std::map<std::string, std::string>> batchData;
-    // For DELETE … KEYS [...]
+    // For DELETE ï¿½ KEYS [...]
     std::vector<std::string> deleteKeys;
 
     // For SELECT
     std::vector<std::string> selectCols;
+    std::vector<AggSpec>     aggs;         // e.g. SUM(field) [AS alias]
     bool isCount = false;
     std::string groupBy;                 // e.g. "user"
     std::string orderByField;            // e.g. "stock"

@@ -24,12 +24,12 @@ static const std::regex delete_re(
 static const std::regex batch_re(
   R"(^BATCH\s+(\w+)\s*(\{.+\})$)", std::regex::icase);
 static const std::regex select_re(
-  R"(^SELECT\s+(.+?)\s+FROM\s+(\w+))", std::regex::icase);
+  R"(^SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+(\w+))?)", std::regex::icase);
 static const std::regex cond_re(
   R"((\w+(?:\.\w+)?)\s*(=|!=|<=|>=|<|>|LIKE)\s*'([^']+)')",
   std::regex::icase);
 static const std::regex join_re(
-  R"(\s+JOIN\s+(\w+)\s+ON\s+(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+))",
+  R"(\s+(LEFT\s+)?JOIN\s+(\w+)(?:\s+(\w+))?\s+ON\s+(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+))",
   std::regex::icase);
 static const std::regex group_re(
   R"(\s+GROUP\s+BY\s+(\w+(?:\.\w+)?))", std::regex::icase);
@@ -60,7 +60,7 @@ Query SqlParser::parse(const std::string &sql) {
     // 2) If the last non-whitespace character is a semicolon, drop it
     if (!s.empty() && s.back() == ';') {
         s.pop_back();           // remove the ';'
-        s = trim(s);            // re-trim in case there’s trailing space before it
+        s = trim(s);            // re-trim in case thereï¿½s trailing space before it
     }
     
 	std::smatch m;
@@ -166,34 +166,79 @@ Query SqlParser::parse(const std::string &sql) {
     // SELECT ... FROM table ...
     if (std::regex_search(s, m, select_re)) {
         q.type = QueryType::SELECT;
-        // columns
-        for (auto &c : split(m[1], ','))
-            q.selectCols.push_back(trim(c));
-        if (q.selectCols.size()==1 &&
+        // columns (support SUM(col) [AS alias] and COUNT(*))
+        // Support qualified fields in SUM, e.g., SUM(l.debit) AS debit
+        static const std::regex sum_re(R"(^SUM\(\s*(\w+(?:\.\w+)?)\s*\)(?:\s+AS\s+(\w+))?$)", std::regex::icase);
+        for (auto &c : split(m[1], ',')) {
+            auto col = trim(c);
+            std::smatch mm;
+            if (std::regex_match(col, mm, sum_re)) {
+                AggSpec a; a.type = AggSpec::SUM; a.field = mm[1];
+                if (mm.size()>2 && mm[2].matched) a.alias = mm[2];
+                q.aggs.push_back(a);
+            } else {
+                q.selectCols.push_back(col);
+            }
+        }
+        if (q.selectCols.size()==1 && q.aggs.empty() &&
             std::regex_match(q.selectCols[0],
               std::regex(R"(^COUNT\(\*\)$)",std::regex::icase)))
         {
             q.isCount = true;
         }
-        // table
+        // table + optional alias mapping
         q.table = m[2];
-        // JOINs
+        std::map<std::string,std::string> aliasToTable;
+        aliasToTable[q.table] = q.table; // identity
+        if (m.size()>3 && m[3].matched) {
+            aliasToTable[m[3]] = q.table; // FROM table alias
+        }
+
+        // JOINs (supports optional aliases and LEFT JOIN)
         for (auto it = std::sregex_iterator(s.begin(), s.end(), join_re);
              it != std::sregex_iterator(); ++it)
         {
             auto &jm = *it;
-            q.joins.push_back({
-              jm[2], jm[3], jm[4], jm[5]
-            });
+            // jm[1] => optional "LEFT ", jm[2] => right table, jm[3] => right alias (opt)
+            // ON jm[4].jm[5] = jm[6].jm[7]
+            std::string rightTable = jm[2];
+            if (jm.size()>3 && jm[3].matched) {
+                aliasToTable[jm[3]] = rightTable;
+            }
+            // Resolve ON qualifiers via alias map (fall back to token itself)
+            std::string onLQual = jm[4];
+            std::string onLField= jm[5];
+            std::string onRQual = jm[6];
+            std::string onRField= jm[7];
+            std::string leftTable = aliasToTable.count(onLQual) ? aliasToTable[onLQual] : onLQual;
+            std::string rightTbl  = aliasToTable.count(onRQual) ? aliasToTable[onRQual] : onRQual;
+            Join j;
+            j.type = (jm[1].matched ? Join::LEFT : Join::INNER);
+            j.leftTable  = leftTable;
+            j.leftField  = onLField;
+            j.rightTable = rightTbl;
+            j.rightField = onRField;
+            q.joins.push_back(j);
         }
         // WHEREs
         for (auto wit = std::sregex_iterator(s.begin(), s.end(), cond_re);
              wit!=std::sregex_iterator(); ++wit)
         {
             auto &cm = *wit;
-            q.conditions.push_back({
-              trim(cm[1]), cm[2], cm[3]
-            });
+            std::string key = trim(cm[1]);
+            // Resolve any qualifier to actual table name via alias map
+            auto dot = key.find('.');
+            if (dot != std::string::npos) {
+                std::string qual  = key.substr(0, dot);
+                std::string field = key.substr(dot+1);
+                std::string tbl = aliasToTable.count(qual) ? aliasToTable[qual] : qual;
+                if (strcasecmp(tbl.c_str(), q.table.c_str())==0) {
+                    key = field; // base-table condition â†’ unqualified for early scan
+                } else {
+                    key = tbl + "." + field; // keep qualified for post-join filtering
+                }
+            }
+            q.conditions.push_back({ key, cm[2], cm[3] });
         }
         // GROUP BY
         if (std::regex_search(s, m, group_re))
@@ -215,4 +260,3 @@ Query SqlParser::parse(const std::string &sql) {
 
     throw std::runtime_error("Unsupported SQL: "+sql);
 }
-

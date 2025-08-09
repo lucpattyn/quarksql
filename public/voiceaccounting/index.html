@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voice Accounting</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#0d9488" />
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="./icons/icon-192.png" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Voice Accounting</h1>
+    <button id="installBtn" class="ghost" hidden>Install</button>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>Auth</h2>
+      <div class="grid2">
+        <label>Username <input id="username" autocomplete="username" /></label>
+        <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
+      </div>
+      <div class="row">
+        <button id="btnLogin">Login</button>
+        <button id="btnSignup" class="ghost">Signup</button>
+        <span id="authStatus" class="status"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Entry Context</h2>
+      <div class="grid3">
+        <label>Project ID <input id="projectId" placeholder="project-id" /></label>
+        <label>Date <input id="date" type="date" /></label>
+        <label>Memo <input id="memo" placeholder="Optional memo" /></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Voice Command</h2>
+      <div class="row">
+        <button id="btnVoice">Start Voice</button>
+        <span id="voiceStatus" class="status"></span>
+      </div>
+      <label>Transcript
+        <textarea id="transcript" rows="4" placeholder="Say: debit 120 to 5300 and credit 120 to 1000"></textarea>
+      </label>
+      <div class="row">
+        <button id="btnParse">Parse Command</button>
+        <span id="parseStatus" class="status"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Lines</h2>
+      <div id="lines"></div>
+      <div class="row">
+        <button id="btnSubmit">Post Journal</button>
+        <span id="submitStatus" class="status"></span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <small>VoiceAccounting PWA · Uses browser speech recognition; for Google Cloud STT, configure a proxy.</small>
+  </footer>
+
+  <script src="./app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(console.error);
+    }
+  </script>
+</body>
+</html>
+

@@ -46,14 +46,7 @@ inline crow::json::wvalue queryResultToJson(const QueryResult& qr) {
         x[i] = std::move(obj);
     }
    
-	crow::json::wvalue result;
-	result["rows"] = std::move(x);
-	result["affected"] = qr.affected;
-	
-	crow::json::wvalue out;
-	out["result"] = std::move(result);
-	
-    return out;
+    return x;
 }
 
 // Initialize V8
@@ -570,7 +563,8 @@ int main(int argc, char** argv) {
 		    void before_handle(crow::request& req, crow::response& res, context&) {
 							
 				// 1) Skip public endpoints
-		        if (req.url == "/" || req.url == "/api/login" || req.url.rfind("/public/", 0) == 0) 
+		        if (req.url == "/" || req.url == "/api/login" || req.url == "/api/signup" 
+					|| req.url.rfind("/webfonts/", 0) == 0 || req.url.rfind("/public/", 0) == 0) 
 					return;
 		
 				std::cout << "before_handle" << std::endl;
@@ -693,30 +687,13 @@ int main(int argc, char** argv) {
 		        return res.end("API handler undefined or error");
 		    }
 		    
-		    if (result->IsArray()) {
-			    //std::string s = safeStringify(g_isolate, ctx, result);
-				std::string s;
-				s = SafeStringify(g_isolate, ctx, result);	
-			    res.set_header("Content-Type", "application/json");
-			    return res.end(s);
-			}
-
 		    // 4) Safely JSON.stringify the result
-		    v8::Local<v8::String> jsonOut;
-		    if (!v8::JSON::Stringify(ctx, result).ToLocal(&jsonOut)) {
-		        // Something went wrong serializing (e.g. circular ref)
-		        v8::String::Utf8Value err(g_isolate, tc.Exception());
-		        res.code = 500;
-		        return res.end(std::string("Stringify error: ") + *err);
-		    }
-		
-		    // 5) Convert to std::string and send
-		    v8::String::Utf8Value utf8(g_isolate, jsonOut);
-		    std::string s = *utf8 ? *utf8 : "";
-		    res.set_header("Content-Type", "application/json");
-		    res.end(s);
-		});
+		    std::string s;
+			s = SafeStringify(g_isolate, ctx, result);	
+			res.set_header("Content-Type", "application/json");
+			return res.end(s);
 
+		});
         
         /////////
         

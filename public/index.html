@@ -1,222 +1,28 @@
+ 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>QuarkSQL Test Console</title>
-  <style>
-    :root {
-      --bg: #1e1e1e;
-      --container-bg: #2e2e2e;
-      --fg: #e0e0e0;
-      --accent: #4e94ce;
-      --button-bg: #3a3a3a;
-      --button-hover: #5a5a5a;
-      --input-bg: #3a3a3a;
-      --input-border: #555;
-      --pre-bg: #262626;
-      --pre-fg: #dcdcdc;
-    }
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: monospace;
-      background: var(--bg);
-      color: var(--fg);
-    }
-    .container {
-      max-width: 900px;
-      margin: 2rem auto;
-      background: var(--container-bg);
-      padding: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-    }
-    h1 {
-      text-align: center;
-      margin-bottom: 1rem;
-      color: var(--accent);
-    }
-    section {
-      margin-top: 1.5rem;
-    }
-    label {
-      display: block;
-      margin-top: 1rem;
-      font-size: 0.9rem;
-    }
-    input, textarea, select {
-      width: 100%;
-      padding: 0.5rem;
-      margin-top: 0.25rem;
-      background: var(--input-bg);
-      border: 1px solid var(--input-border);
-      border-radius: 4px;
-      color: var(--fg);
-      box-sizing: border-box;
-    }
-    button {
-      margin: 0.5rem 0.25rem 0 0;
-      padding: 0.5rem 1rem;
-      background: var(--button-bg);
-      border: none;
-      color: var(--fg);
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    button:hover:not(:disabled) {
-      background: var(--button-hover);
-    }
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    #output {
-      background: var(--pre-bg);
-      color: var(--pre-fg);
-      padding: 1rem;
-      border-radius: 4px;
-      height: 300px;
-      overflow: auto;
-      white-space: pre-wrap;
-      font-size: 0.85rem;
-    }
-    #querySection {
-      display: none;
-    }
-    #logoutBtn {
-      margin-bottom:20px;
-	  float: right;
-      background: var(--accent);
-    }
-  </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Quarksql Accounting</title>
+  <link rel="stylesheet" href="/public/styles.css"/>
+  <!-- Icons: Font Awesome (CDN) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
 </head>
 <body>
-  <div class="container">
-    <h1>QuarkSQL Test Console</h1>
-    <button id="logoutBtn" disabled>Logout</button>
-    <div>Read Me </div>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">Quark<span>Accounting</span></div>
+      <nav id="nav"></nav>
+    </header>
 
-    <section id="loginSection">
-      <label for="username">Username</label>
-      <input type="text" id="username" placeholder="e.g. admin">
+    <main id="view"></main>
 
-      <label for="password">Password</label>
-      <input type="password" id="password" placeholder="your password">
-
-      <button id="loginBtn">Login</button>
-    </section>
-
-    <section id="querySection">
-      <label for="exampleSelect">Choose an example</label>
-      <select id="exampleSelect">
-        <!-- Reads from your schemas.json -->
-        <optgroup label="— READ (SELECT)">
-          <option value="SELECT * FROM users;">All users</option>
-          <option value="SELECT * FROM products WHERE price > '20';">Products priced > 20</option>
-          <option value="SELECT * FROM journal WHERE date >= '2025-01-01';">Journal entries since 2025</option>
-          <option value="SELECT * FROM products ORDER BY stock DESC SKIP 1 LIMIT 3;">Top stock (skip 1, limit 3)</option>
-        </optgroup>
-        <optgroup label="— AGGREGATION">
-          <option value="SELECT COUNT(*) FROM orders;">Total orders count</option>
-          <option value="SELECT user, COUNT(*) FROM orders GROUP BY user ORDER BY COUNT DESC;">Orders per user</option>
-          <option value="SELECT productId, COUNT(*) FROM orders GROUP BY productId ORDER BY COUNT DESC SKIP 0 LIMIT 5;">Top products by orders</option>
-        </optgroup>
-        <optgroup label="— JOIN">
-          <option value="SELECT orders.id, users.email FROM orders JOIN users ON orders.user = users.email;">Order ? User</option>
-          <option value="SELECT orders.id, products.name, orders.qty FROM orders JOIN products ON orders.productId = products.id;">Order ? Product</option>
-        </optgroup>
-        <optgroup label="— WRITE (INSERT/UPDATE/DELETE/BATCH)">
-          <option value='INSERT INTO users VALUES {"email":"alice@example.com","password":"secret"};'>Insert a user</option>
-          <option value='UPDATE users SET {"email":"alice@example.com","password":"newsecret"};'>Update that user’'s password</option>
-          <option value='DELETE FROM users KEYS ["alice@example.com"];'>Delete that user</option>
-          <option value='BATCH products {"p1":{"id":"p1","name":"Widget","price":19.99,"stock":100},"p2":{"id":"p2","name":"Gadget","price":29.99,"stock":50}};'>Batch-insert products</option>
-        </optgroup>
-      </select>
-
-      <label for="sqlInput">SQL Query</label>
-      <textarea id="sqlInput" rows="4"></textarea>
-
-      <div>
-        <button id="queryBtn">Run Query</button>
-        <button id="executeBtn">Execute Command</button>
-      </div>
-    </section>
-
-    <section>
-      <label>Output</label>
-      <div id="output">{ }</div>
-    </section>
+    <footer class="foot">
+      <small>Quarksql Accounting Â· Demo SPA</small>
+    </footer>
   </div>
 
-  <script>
-    let jwtToken = '';
-
-    async function callApi(fn, payload = {}) {
-      const headers = {'Content-Type':'application/json'};
-      if (jwtToken) headers['Authorization'] = 'Bearer ' + jwtToken;
-      const res = await fetch('/api/' + fn, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload)
-      });
-      const text = await res.text();
-      try { return JSON.parse(text); }
-      catch { return { error: text }; }
-    }
-
-    function setOutput(txt) {
-      document.getElementById('output').textContent = txt;
-    }
-
-    // Login
-    document.getElementById('loginBtn').onclick = async () => {
-      const user = document.getElementById('username').value;
-      const pass = document.getElementById('password').value;
-      setOutput('Logging in…');
-      const res = await callApi('login', { username: user, password: pass });
-      if (res.token) {
-        jwtToken = res.token;
-        document.getElementById('loginSection').style.display = 'none';
-        document.getElementById('querySection').style.display = 'block';
-        document.getElementById('logoutBtn').disabled = false;
-        setOutput(JSON.stringify(res, null, 2));
-      } else {
-        setOutput(JSON.stringify(res, null, 2));
-      }
-    };
-
-    // Logout
-    document.getElementById('logoutBtn').onclick = () => {
-      jwtToken = '';
-      document.getElementById('loginSection').style.display = 'block';
-      document.getElementById('querySection').style.display = 'none';
-      document.getElementById('logoutBtn').disabled = true;
-      setOutput('{ }');
-    };
-
-    // Examples dropdown ? SQL textarea
-    const exampleSelect = document.getElementById('exampleSelect');
-    exampleSelect.onchange = () => {
-      document.getElementById('sqlInput').value = exampleSelect.value;
-    };
-    exampleSelect.dispatchEvent(new Event('change'));
-
-    // Run SELECT
-    document.getElementById('queryBtn').onclick = async () => {
-      const sql = document.getElementById('sqlInput').value;
-      setOutput('Running query…');
-      const res = await callApi('query', { sql });
-      setOutput(JSON.stringify(res, null, 2));
-    };
-
-    // Execute INSERT/UPDATE/DELETE/BATCH
-    document.getElementById('executeBtn').onclick = async () => {
-      const sql = document.getElementById('sqlInput').value;
-      setOutput('Executing…');
-      const res = await callApi('execute', { sql });
-      setOutput(JSON.stringify(res, null, 2));
-    };
-  </script>
+  <script src="/public/app.js"></script>
 </body>
 </html>
-
