@@ -113,40 +113,10 @@ BATCH products {"p1":{"id":"p1","name":"Widget"},"p2":{"id":"p2","name":"Gadget"
 
 `public/index.html` provides ready-to-run accounting system containing 
 examples for SELECT, AGGREGATION, JOIN, LEFT and WRITE commands in scripts folder.
+sanitize.js and auth.js has some required default functions called from C++ and 
+should not be modified without proper understanding
 
 ---
-
-## 🧳 Standalone Build (Vendorized)
-
-To bundle headers and shared libraries locally so the executable runs with libs from `./lib`:
-
-1) Build once so dependencies are resolvable by `ldd`.
-
-```
-cmake -S . -B build -DCMAKE_CXX_STANDARD=17
-cmake --build build -j$(nproc)
-```
-
-2) Vendorize headers and shared libs (adjust env vars if your includes are non-standard):
-
-```
-chmod +x scripts/vendorize.sh
-V8_INC=/usr/include/v8 \
-ROCKSDB_INC=/usr/include \
-BOOST_INC=/usr/include/boost \
-./scripts/vendorize.sh
-```
-
-3) Reconfigure to prefer the vendored includes and set RPATH to `$ORIGIN/lib`:
-
-```
-cmake -S . -B build -DQUARKSQL_VENDORIZED=ON -DCMAKE_CXX_STANDARD=17
-cmake --build build -j$(nproc)
-```
-
-The resulting `build/quarksql` will search for `.so` in `./lib` at runtime. Copy `schemas.json`, `public/`, and `scripts/` into `build/` (as above) to run.
-
-Note: Shipping OpenSSL and libstdc++ across distros can be fragile. Prefer similar target environments, or consider containerization for maximal portability.
 
 ## Business Logic Layer Overview
 
