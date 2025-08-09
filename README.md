@@ -35,11 +35,13 @@ sudo apt install -y build-essential cmake librocksdb-dev libv8-dev
 ```
 
 ```
- Boost 1.69 needs to be installed because the webserver runs on Crow C++
+ Boost 1.69 needs to be installed because the webserver runs on Crow C++ which is dependent on boost.
 ```
 Boost download instractions can be found [here](https://dev.to/lucpattyn/install-quarks-in-ubuntu-2004-and-above-1fcf)
-*If you face trouble compiling this project then the above link has full step by step instructions. 
-ZeroMQ not used in this project, so not needed to be installed.
+
+However a zipped version of BOOST header is provided, so it's possible to extract and place in same third-party folder.
+Then the build will use the local version linking with the boost libs residing in the libs/thirdparties folder.
+If extracted properly, can save time of installing boost in the ubuntu system. 
 
 ### Build
 
