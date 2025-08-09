@@ -564,7 +564,7 @@ int main(int argc, char** argv) {
 							
 				// 1) Skip public endpoints
 		        if (req.url == "/" || req.url == "/api/login" || req.url == "/api/signup" 
-					|| req.url.rfind("/webfonts/", 0) == 0 || req.url.rfind("/public/", 0) == 0) 
+					|| req.url.rfind("/public/", 0) == 0) 
 					return;
 		
 				std::cout << "before_handle" << std::endl;
@@ -711,6 +711,14 @@ int main(int argc, char** argv) {
 	        crow::mustache::context ctx;
 	        ctx["name"] = "Crow User";
 	        auto page = crow::mustache::load(p);
+	        return page.render(ctx);
+	    });
+		CROW_ROUTE(app, "/public/voice/<string>")
+		([](std::string p) {
+		    std::string v = std::string("/voice/") + p;
+	        crow::mustache::context ctx;
+	        ctx["name"] = "Crow User";
+	        auto page = crow::mustache::load(v);
 	        return page.render(ctx);
 	    });
 

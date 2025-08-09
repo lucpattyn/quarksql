@@ -244,6 +244,8 @@ The actual example in scripts + public directory is of a simple Accounting Softw
 It has journal entries and basic reports like ledge, trial balance, p&f and balance sheet.
 You can create an account in sign up and use that info to login to the system.
 Voice accounting inside public is an ongoing R&D about voice based accounting.
+
+Visit `http://localhost:18080/public/voice/index.html` for the voice based accounting example.
 ---
 
 ## Example HTTP Flow with Business Logic

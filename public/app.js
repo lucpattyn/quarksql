@@ -189,16 +189,27 @@ async function page_journal(){
   if (!store.currentProject) return page_dashboard();
   const v = view(); v.innerHTML = '';
 
-  // Header + form controls
+  // Scoped compact styling for journal lines
+  const compactCSS = el('style', { html: `
+    /* Only affect the inline journal lines area */
+    #lines .grid.cols-3 { gap: 8px; margin: 2px 0; align-items: center; }
+    #lines .input, #lines select { padding: 4px 6px; height: 28px; font-size: 14px; }
+    #lines .btn { padding: 4px 8px; height: 28px; line-height: 20px; }
+  `});
+
   const header = el('div',{class:'card'},[
     el('h2',{html:'New Journal Entry'}),
     projectSelector(()=>page_journal()),
     el('div',{class:'grid cols-3',style:'margin-top:8px'},[
       el('input',{class:'input',type:'date',id:'je_date', value: new Date().toISOString().slice(0,10)}),
       el('input',{class:'input',placeholder:'Memo',id:'je_memo'}),
-      el('button',{class:'btn', style:'background:#0d6efd;color:#fff;', 
-	  	onclick: addLine, html:'<i class="fa-solid fa-plus"></i> Add Line'})
-
+      // Make Add Line button blue
+      el('button',{
+        class:'btn',
+        style:'background:#3b82f6;border-color:#3b82f6;color:#fff',
+        onclick: addLine,
+        html:'<i class="fa-solid fa-plus"></i> Add Line'
+      })
     ]),
     el('div',{id:'lines'}),
     el('button',{class:'btn',style:'margin-top:10px', onclick: postEntry, html:'<i class="fa-solid fa-paper-plane"></i> Post Entry'})
@@ -209,6 +220,7 @@ async function page_journal(){
     el('table',{class:'table',id:'je_table'})
   ]);
 
+  v.appendChild(compactCSS);
   v.appendChild(el('div',{class:'grid cols-2'},[header, listCard]));
 
   // Lines state
@@ -217,39 +229,27 @@ async function page_journal(){
   const linesDiv = document.getElementById('lines');
   let lines = [];
 
-  // --- compact row UI ---
-  // 4 columns: Account | Debit | Credit | [ × ]
-  // Use inline styles to make inputs shorter without touching your global CSS.
   function lineRow(idx){
-    const row = el('div',{
-      class:'je-row',
-      style:'display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:center;margin:6px 0;'
-    });
+    const sel = el('select',{class:'input'});
+    accounts.forEach(a=>{ const o = el('option',{value:a.code}); o.textContent = `${a.code} - ${a.name}`; sel.appendChild(o); });
+    const debit = el('input',{class:'input',placeholder:'Debit',type:'number',step:'0.01'});
+    const credit = el('input',{class:'input',placeholder:'Credit',type:'number',step:'0.01'});
 
-    const sel = el('select',{
-      class:'input',
-      style:'height:36px;padding:6px 10px;'
-    });
-    accounts.forEach(a=>{
-      const o = el('option',{value:a.code}); o.textContent = `${a.code} - ${a.name}`; sel.appendChild(o);
-    });
-
-    const debit  = el('input',{class:'input',placeholder:'Debit', type:'number', step:'0.01', style:'height:36px;padding:6px 10px;'});
-    const credit = el('input',{class:'input',placeholder:'Credit',type:'number', step:'0.01', style:'height:36px;padding:6px 10px;'});
-
-    // Small icon-only remove button
+    // Icon-only delete button, compact, no full width
     const rm = el('button',{
-	  title:'Remove line',
-	  style:'height:36px;width:36px;display:flex;align-items:center;justify-content:center;border:none;border-radius:8px;background:#dc3545;color:#fff;cursor:pointer;',
-	  onclick:()=>{ lines.splice(idx,1); redraw(); },
-	  html:'<i class="fa-solid fa-xmark"></i>'
-	});
-    
-    row.appendChild(sel);
-    row.appendChild(debit);
-    row.appendChild(credit);
-    row.appendChild(rm);
-    return row;
+      class:'btn danger',
+      title:'Delete line',
+      style:'width:28px; min-width:24px; padding:4px 8px',
+      html:'<i class="fa-solid fa-trash"></i>'
+    });
+    rm.onclick = ()=>{ lines.splice(idx,1); redraw(); };
+
+    // Keep outer row at cols-3; put credit+delete in a 2-col mini-grid
+    const right = el('div',{
+      style:'display:grid; grid-template-columns:1fr auto; gap:8px; justify-items:center; align-items:center;'
+    },[credit, rm]);
+
+    return el('div',{class:'grid cols-3',style:'margin:2px 0'},[sel, debit, right]);
   }
 
   function redraw(){
@@ -262,14 +262,12 @@ async function page_journal(){
   async function postEntry(){
     const date = document.getElementById('je_date').value;
     const memo = document.getElementById('je_memo').value;
-
-    // Collect rows
-    const ui = Array.from(linesDiv.querySelectorAll('.je-row'));
+    const ui = Array.from(linesDiv.querySelectorAll('.grid.cols-3'));
     const payloadLines = ui.map(row => {
-      const [sel,debit,credit] = row.children; // rm is the 4th child
+      const [sel, debit, right] = row.children;
+      const credit = right.querySelector('input[type="number"]');
       return { account_code: sel.value, debit: +debit.value || 0, credit: +credit.value || 0 };
     });
-
     try {
       await API.call('postJournal',{ token: store.token, project_id: store.currentProject, date, memo, lines: payloadLines });
       alert('Posted.');
@@ -277,15 +275,12 @@ async function page_journal(){
     } catch(e){ alert(e.message); }
   }
 
-  // Start with two lines
   addLine(); addLine();
 
-  // Recent entries
   const res = await API.call('listJournals',{ token: store.token, project_id: store.currentProject, limit: 50 });
   const rows = res.entries || [];
   const table = document.getElementById('je_table');
-  table.innerHTML = '<tr><th>Date</th><th>Memo</th><th>By</th><th>Actions</th></tr>' +
-    rows.map(r=>`<tr data-id="${r.id}"><td>${r.date}</td><td>${r.memo||''}</td><td>${r.created_by}</td><td><button class="btn ghost" data-view="${r.id}"><i class="fa-regular fa-eye"></i> View</button></td></tr>`).join('');
+  table.innerHTML = '<tr><th>Date</th><th>Memo</th><th>By</th><th>Actions</th></tr>' + rows.map(r=>`<tr data-id="${r.id}"><td>${r.date}</td><td>${r.memo||''}</td><td>${r.created_by}</td><td><button class="btn ghost" data-view="${r.id}"><i class="fa-regular fa-eye"></i> View</button></td></tr>`).join('');
   table.querySelectorAll('button[data-view]').forEach(btn=>{
     btn.onclick = async ()=>{
       const id = btn.getAttribute('data-view');
@@ -300,6 +295,7 @@ async function page_journal(){
     };
   });
 }
+
 
 
 async function page_reports(){

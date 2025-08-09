@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Voice Accounting</title>
-  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="manifest" href="/public/voice/manifest.webmanifest" />
   <meta name="theme-color" content="#0d9488" />
-  <link rel="stylesheet" href="./styles.css" />
-  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="/public/voice/styles.css" />
+  <link rel="icon" href="/public/voice/icons/icon-192.png" />
 </head>
 <body>
   <header class="topbar">
@@ -32,7 +32,10 @@
     <section class="card">
       <h2>Entry Context</h2>
       <div class="grid3">
-        <label>Project ID <input id="projectId" placeholder="project-id" /></label>
+        <label>Project
+          <select id="projectSelect"></select>
+          <input id="projectId" type="hidden" />
+        </label>
         <label>Date <input id="date" type="date" /></label>
         <label>Memo <input id="memo" placeholder="Optional memo" /></label>
       </div>
@@ -45,7 +48,7 @@
         <span id="voiceStatus" class="status"></span>
       </div>
       <label>Transcript
-        <textarea id="transcript" rows="4" placeholder="Say: debit 120 to 5300 and credit 120 to 1000"></textarea>
+        <textarea id="transcript" rows="4" placeholder="Say: pay Rent 550 from Cash or credit Cash 1000 from Bank"></textarea>
       </label>
       <div class="row">
         <button id="btnParse">Parse Command</button>
@@ -61,16 +64,45 @@
         <span id="submitStatus" class="status"></span>
       </div>
     </section>
+
+
+    <section class="card">
+      <h2>Reports</h2>
+      <div class="grid3">
+        <label>Report
+          <select id="reportKind">
+            <option value="trialBalance">Trial Balance</option>
+            <option value="profitAndLoss">Profit &amp; Loss</option>
+            <option value="balanceSheet">Balance Sheet</option>
+            <option value="ledger">Ledger</option>
+          </select>
+        </label>
+        <label>From <input id="repFrom" type="date" /></label>
+        <label>To <input id="repTo" type="date" /></label>
+      </div>
+      <div class="row">
+        <label style="flex:1">Ledger Account
+          <input id="ledgerAccount" list="accountsDatalist" placeholder="e.g., 1000 · Cash or 'Cash'" />
+          <datalist id="accountsDatalist"></datalist>
+        </label>
+      </div>
+      <div class="row">
+        <button id="btnRunReport">Run</button>
+        <span id="reportStatus" class="status"></span>
+      </div>
+      <div id="reportOut"></div>
+    </section>
   </main>
 
   <footer class="foot">
-    <small>VoiceAccounting PWA · Uses browser speech recognition; for Google Cloud STT, configure a proxy.</small>
+    <small>Voice Accounting PWA - Uses browser speech recognition; 
+			for Google Cloud STT for better recognition, configure a proxy.</small>
   </footer>
 
-  <script src="./app.js"></script>
+  <script src="/public/voice/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(console.error);
+      navigator.serviceWorker.register('/public/voice/sw.js').catch(console.error);
     }
   </script>
 </body>

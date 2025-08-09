@@ -34,10 +34,11 @@ var DEFAULT_ACCOUNTS = [
   { code:'4100', name:'Service Revenue', type:'Revenue' },
   // Expenses
   { code:'5000', name:'Cost of Goods Sold', type:'Expense' },
-  { code:'5100', name:'Rent Expense', type:'Expense' },
-  { code:'5200', name:'Utilities Expense', type:'Expense' },
-  { code:'5300', name:'Payroll Expense', type:'Expense' },
-  { code:'5400', name:'Marketing Expense', type:'Expense' }
+  { code:'5100', name:'Rent', type:'Expense' },
+  { code:'5200', name:'Utilities', type:'Expense' },
+  { code:'5300', name:'Salaries', type:'Expense' },
+  { code:'5400', name:'Marketing', type:'Expense' },
+  { code:'5500', name:'Shopping', type:'Expense' }
 ];
 
 function ensureAccountsForProject(project_id){
@@ -417,6 +418,111 @@ api.accountLedger = {
         credit: L.credit||0,
         balance: +running.toFixed(2)
       });
+    }
+    return { ledger: out };
+  }
+};
+
+
+// ---- VoiceAccounting report endpoints (added, non-breaking) ----
+api.voiceTrialBalance = {
+  params: ['token','project_id','from','to'],
+  handler: function(p){
+    sanitize.checkParams(p, ['token','project_id']);
+    requireUser(p.token);
+    var from = p.from ? " AND e.date >= '" + sanitize.isoDate(p.from,'from') + "'" : "";
+    var to   = p.to   ? " AND e.date <= '" + sanitize.isoDate(p.to,'to') + "'"   : "";
+    var sql = "SELECT l.account_code, SUM(l.debit) AS debit, SUM(l.credit) AS credit " +
+              "FROM journal_lines l LEFT JOIN journal_entries e ON l.entry_id = e.id " +
+              "WHERE l.project_id = '" + p.project_id + "'" + from + to + " GROUP BY l.account_code ORDER BY l.account_code ASC;";
+    var rows = db.query(sql) || [];
+    var names = db.query("SELECT code,name,type FROM accounts WHERE project_id = '" + p.project_id + "';") || [];
+    var nameByCode = {}; names.forEach(function(a){ nameByCode[a.code] = {name:a.name, type:a.type}; });
+    rows.forEach(function(r){
+      var info = nameByCode[r.account_code] || {name:'(Unknown)', type:'Unknown'};
+      r.name = info.name; r.type = info.type;
+      r.balance = +(+(r.debit||0) - +(r.credit||0)).toFixed(2);
+    });
+    return { rows: rows };
+  }
+};
+
+api.voiceProfitAndLoss = {
+  params: ['token','project_id','from','to'],
+  handler: function(p){
+    sanitize.checkParams(p, ['token','project_id']);
+    requireUser(p.token);
+    var from = p.from ? " AND e.date >= '" + sanitize.isoDate(p.from,'from') + "'" : "";
+    var to   = p.to   ? " AND e.date <= '" + sanitize.isoDate(p.to,'to') + "'"   : "";
+    var sql = "SELECT l.account_code, SUM(l.debit) AS debit, SUM(l.credit) AS credit " +
+              "FROM journal_lines l LEFT JOIN journal_entries e ON l.entry_id = e.id " +
+              "WHERE l.project_id = '" + p.project_id + "'" + from + to + " GROUP BY l.account_code;";
+    var rows = db.query(sql) || [];
+    var names = db.query("SELECT code,type FROM accounts WHERE project_id = '" + p.project_id + "';") || [];
+    var typeByCode = {}; names.forEach(function(a){ typeByCode[a.code] = a.type; });
+    var revenue = 0, expense = 0;
+    rows.forEach(function(r){
+      var t = typeByCode[r.account_code] || 'Unknown';
+      var debit = +(r.debit||0), credit = +(r.credit||0);
+      if (t === 'Revenue') revenue += +(credit - debit);
+      if (t === 'Expense') expense += +(debit - credit);
+    });
+    revenue = +(+revenue).toFixed(2);
+    expense = +(+expense).toFixed(2);
+    var net = +(revenue - expense).toFixed(2);
+    return { revenue: revenue, expense: expense, net_income: net };
+  }
+};
+
+api.voiceBalanceSheet = {
+  params: ['token','project_id','as_of'],
+  handler: function(p){
+    sanitize.checkParams(p, ['token','project_id']);
+    requireUser(p.token);
+    var asOf = p.as_of ? " AND e.date <= '" + sanitize.isoDate(p.as_of,'as_of') + "'" : "";
+    var sql = "SELECT l.account_code, SUM(l.debit) AS debit, SUM(l.credit) AS credit " +
+              "FROM journal_lines l LEFT JOIN journal_entries e ON l.entry_id = e.id " +
+              "WHERE l.project_id = '" + p.project_id + "'" + asOf + " GROUP BY l.account_code;";
+    var rows = db.query(sql) || [];
+    var names = db.query("SELECT code,name,type FROM accounts WHERE project_id = '" + p.project_id + "';") || [];
+    var nameByCode = {}; names.forEach(function(a){ nameByCode[a.code] = {name:a.name, type:a.type}; });
+    var assets=[], liabilities=[], equity=[];
+    var earnings = 0.0;
+    rows.forEach(function(r){
+      var info = nameByCode[r.account_code] || {name:r.account_code, type:'Unknown'};
+      var bal = +(+(r.debit||0) - +(r.credit||0)).toFixed(2);
+      var row = { code:r.account_code, name:info.name, balance: bal };
+      if (info.type==='Asset') assets.push(row);
+      else if (info.type==='Liability') liabilities.push(row);
+      else if (info.type==='Equity') equity.push(row);
+      else if (info.type==='Revenue') earnings+=bal;
+      else if (info.type==='Expense') earnings+=bal;
+    });
+    if(earnings != 0.0){ equity.push({ code:'0000', name:'Earnings before closing', balance: earnings }); }
+    function total(arr){ var s=0; for (var i=0;i<arr.length;i++){ s += +(+arr[i].balance||0); } return +s.toFixed(2); }
+    return { assets: assets, liabilities: liabilities, equity: equity, totals: { assets: total(assets), liabilities: total(liabilities), equity: total(equity) } };
+  }
+};
+
+api.voiceAccountLedger = {
+  params: ['token','project_id','account_code','from','to'],
+  handler: function(p){
+    sanitize.checkParams(p, ['token','project_id','account_code']);
+    requireUser(p.token);
+    var from = p.from ? " AND e.date >= '" + sanitize.isoDate(p.from,'from') + "'" : "";
+    var to   = p.to   ? " AND e.date <= '" + sanitize.isoDate(p.to,'to') + "'"   : "";
+    var sql = "SELECT entry_id, line_no, debit, credit, date, memo " +
+              "FROM journal_lines l LEFT JOIN journal_entries e ON l.entry_id = e.id " +
+              "WHERE l.project_id = '" + p.project_id + "' AND l.account_code = '" + p.account_code + "'" + from + to +
+              " ORDER BY e.date ASC, l.entry_id ASC, l.line_no ASC;";
+              
+              
+    var rows = db.query(sql) || [];
+    var running = 0; var out = [];
+    for (var i=0;i<rows.length;i++){
+      var L = rows[i];
+      running += +((L.debit||0) - (L.credit||0));
+      out.push({ entry_id: L.entry_id, date: L.date||'', memo: L.memo||'', line_no: L.line_no, debit: L.debit||0, credit: L.credit||0, balance: +running.toFixed(2) });
     }
     return { ledger: out };
   }
