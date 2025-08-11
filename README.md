@@ -35,11 +35,24 @@ sudo apt install -y build-essential cmake librocksdb-dev libv8-dev
 ```
 
 ```
- Boost 1.69 needs to be installed because the webserver runs on Crow C++ which is dependent on boost.
+ Boost 1.69 needs to be installed because the webserver
+ runs on Crow C++ which is dependent on boost.
 ```
-Boost download instractions can be found [here](https://dev.to/lucpattyn/install-quarks-in-ubuntu-2004-and-above-1fcf)
+Boost download instractions can be found 
+[here](https://dev.to/lucpattyn/install-quarks-in-ubuntu-2004-and-above-1fcf)
 
-However a zipped version of BOOST header is provided, so it's possible to extract and place in same third-party folder.
+To make things easier, we have supplied the boost lib file, so all you need to do is have a local copy of
+boost headers in third-party folder.
+
+To place boost local header, after entering the root directory (quarksql) try:
+
+```bash
+cd third-party
+sudo wget -O boost_1_69_0.tar.gz https://archives.boost.io/release/1.69.0/source/boost_1_69_0.tar.gz  
+
+sudo tar -xvzf boost_1_69_0.tar.gz 
+```
+This should extract boost and place in same third-party folder as crow. Rename the folder to #boost
 Then the build will use the local version linking with the boost libs residing in the libs/thirdparties folder.
 If extracted properly, can save time of installing boost in the ubuntu system. 
 
@@ -293,6 +306,7 @@ Visit `http://localhost:18080/public/voice/index.html` for the voice based accou
 ## License
 
 MIT
+
 
 
 
