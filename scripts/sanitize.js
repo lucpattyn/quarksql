@@ -74,3 +74,4 @@ if (typeof exports !== 'undefined') {
 } else {
   this.sanitize = api;
 }
+

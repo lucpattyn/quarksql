@@ -5,6 +5,8 @@
 #include "QueryExecutor.h"
 #include "JwtUtils.h"
 
+#include "LLM.h"
+
 #include <v8.h>
 #include <libplatform/libplatform.h>
 #include <fstream>
@@ -436,7 +438,32 @@ static std::string SafeStringify(v8::Isolate* isolate,
     return *utf8 ? *utf8 : "";
 }
 
+#include <fstream>
+#include <filesystem>
 
+namespace fs = std::filesystem;
+// simple helper to detect mimetype for filetypes
+static std::string mime_for(std::string path) {
+    std::string ext = fs::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    if (ext == ".html" || ext == ".htm") return "text/html; charset=utf-8";
+    if (ext == ".js")                    return "text/javascript; charset=utf-8";
+    if (ext == ".css")                   return "text/css; charset=utf-8";
+    if (ext == ".json")                  return "application/json; charset=utf-8";
+    if (ext == ".webmanifest")           return "application/manifest+json";
+    if (ext == ".wasm")                  return "application/wasm";
+    if (ext == ".svg")                   return "image/svg+xml";
+    if (ext == ".png")                   return "image/png";
+    if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+    if (ext == ".gif")                   return "image/gif";
+    if (ext == ".ico")                   return "image/x-icon";
+    if (ext == ".woff2")                 return "font/woff2";
+    if (ext == ".woff")                  return "font/woff";
+    if (ext == ".ttf")                   return "font/ttf";
+    if (ext == ".map")                   return "application/json; charset=utf-8";
+    return "application/octet-stream";
+}
 
 //----------------------------------------------
 // 4) main()
@@ -528,8 +555,6 @@ int main(int argc, char** argv) {
 		          sanitizeModVal)
 		    .FromJust();
 
-	
-	
 		// 3) Load main business file (defines api.login, api.list, etc.)
         std::string biz = LoadScript("scripts/business.js");
 		/*Local<Script> bs = Script::Compile(
@@ -649,6 +674,48 @@ int main(int argc, char** argv) {
     	SchemaManager::loadFromFile("schemas.json");
     	if (!DBManager::instance().init("quarks_db")) return 1;
     	IndexManager::rebuildAll();
+    	
+    	// ---------- Crow route wiring for LLM ----------
+	    CROW_ROUTE(app, "/llm/generateCode")
+		    .methods("POST"_method)
+	    ([](const crow::request& req){
+	    	
+	    	std::cout << "llm" << std::endl;
+	    
+	    	curl_global_init(CURL_GLOBAL_DEFAULT);
+	
+		    LLMConfig cfg;
+		    // Set one of these:
+		    // cfg.PROXY_URL = "https://your-proxy.example/generate";           // preferred
+		    // or direct:
+		    cfg.OPENROUTER_API_KEY = "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";
+			                     // keep server-side!
+		
+		    try {
+	            auto body = json::parse(req.body);
+	
+	            std::string requirements = body["requirements"].get<std::string>();
+	            std::string model = body.value("model", std::string("qwen/qwen3-30b-a3b:free"));
+	            bool stream = body.value("stream", false);
+	            
+	            std::cout << requirements << model << stream << std::endl;
+	
+	            std::string code = generateCodeLLM(cfg, requirements, model, stream);
+	
+	            json out = { {"ok", true}, {"code", code} };
+	            crow::response r{ out.dump() };
+	            r.set_header("Content-Type", "application/json; charset=utf-8");
+	            return r;
+	        } catch (const std::exception& e) {
+	            json err = { {"ok", false}, {"error", e.what()} };
+	            crow::response r{ 500, err.dump() };
+	            r.set_header("Content-Type", "application/json; charset=utf-8");
+	            return r;
+	        }
+	        
+	        curl_global_cleanup();
+	    });
+    	
 
 		CROW_ROUTE(app, "/api/<string>")
 		    .methods("POST"_method)
@@ -679,8 +746,7 @@ int main(int argc, char** argv) {
 		        res.code = 500;
 		        return res.end(std::string("JS handler exception: ") + *err);
 		    }
-		    std::cout << "got result" << std::endl;
-		
+		    
 		    // 3) If handler returned undefined, 404 
 		    if (result->IsUndefined()) {
 		        res.code = 404;
@@ -690,6 +756,8 @@ int main(int argc, char** argv) {
 		    // 4) Safely JSON.stringify the result
 		    std::string s;
 			s = SafeStringify(g_isolate, ctx, result);	
+			std::cout << "got result: " << s << std::endl;
+		
 			res.set_header("Content-Type", "application/json");
 			return res.end(s);
 
@@ -705,23 +773,53 @@ int main(int argc, char** argv) {
 	        auto page = crow::mustache::load("index.html");
 	        return page.render(ctx);
 	    });
-		CROW_ROUTE(app, "/public/<string>")
+		/*CROW_ROUTE(app, "/public/<path>")
 		([](std::string p) {
-		
-	        crow::mustache::context ctx;
+			crow::mustache::context ctx;
 	        ctx["name"] = "Crow User";
 	        auto page = crow::mustache::load(p);
 	        return page.render(ctx);
-	    });
-		CROW_ROUTE(app, "/public/voice/<string>")
+	    });*/
+	    
+	    CROW_ROUTE(app, "/public/<path>")
+		([](std::string p) {
+		    // guard + directory default
+		    if (p.find("..") != std::string::npos) return crow::response(404);
+		    if (p.empty() || p.back() == '/') p += "index.html";
+		
+		    const std::string mime = mime_for(p);
+		
+		    // HTML via mustache (uses crow::mustache::set_base("public") you set earlier)
+		    if (mime.rfind("text/html", 0) == 0) {
+		        crow::mustache::context ctx;
+		        ctx["name"] = "Crow User";
+		        auto body = crow::mustache::load(p).render(ctx);
+		
+		        crow::response r(body);
+		        r.set_header("Content-Type", mime);
+		        return r;
+		    }
+		
+		    // everything else served raw from ./public
+		    std::ifstream f((fs::path("public") / p).string(), std::ios::binary);
+		    if (!f.good()) return crow::response(404);
+		
+		    std::ostringstream ss; ss << f.rdbuf();
+		    crow::response r(ss.str());
+		    r.set_header("Content-Type", mime);
+		    return r;
+		});
+	    
+		/*CROW_ROUTE(app, "/public/voice/<string>")
 		([](std::string p) {
 		    std::string v = std::string("/voice/") + p;
 	        crow::mustache::context ctx;
 	        ctx["name"] = "Crow User";
 	        auto page = crow::mustache::load(v);
 	        return page.render(ctx);
-	    });
-
+	    });*/
+	    
+	    
         app.port(18080).multithreaded().run();
 
 

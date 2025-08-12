@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Accounting Console</title>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<header><h1>Accounting Console</h1></header>
+<main>
+<section id="auth"><label>Token</label><input id="token" placeholder="paste JWT (optional)"/></section>
+<section id="actions"><h2>Endpoints</h2><div id="endpoints"></div></section>
+<section id="io">
+<h2>Params</h2>
+<textarea id="params" rows="8" placeholder="{
+  &quot;token&quot;: &quot;&quot;
+}"></textarea>
+<button id="runBtn">Run</button>
+<h2>Result</h2><pre id="out"></pre>
+</section>
+</main>
+<script>window.__APP_META__ = {"endpoints":[{"name":"acct_projects_list","params":["token"]},{"name":"acct_accounts_by_project","params":["token","project_id"]},{"name":"acct_journals_by_project","params":["token","project_id","skip","limit"]},{"name":"acct_add_account","params":["token","project_id","code","name","type"]}],"name":"Accounting Console","slug":"acct"};</script>
+<script src="app.js"></script>
+</body>
+</html>
