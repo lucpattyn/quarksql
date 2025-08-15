@@ -528,7 +528,38 @@ api.voiceAccountLedger = {
   }
 };
 
-require("acct");
+// Blockchain API is optional; enabled by requiring scripts/blockchain/api.js
+api.bc_enable = {
+  params: ['token'],
+  handler: function(p){
+    sanitize.checkParams(p, ['token']);
+    requireUser(p.token);
+    require('blockchain/api');
+    return { ok: true };
+  }
+};
 
-// auto-generated include for acct
-require("acct");
+api.bc_probe = {
+  params: ['token'],
+  handler: function(p){
+    sanitize.checkParams(p, ['token']);
+    requireUser(p.token);
+    var reqType = typeof require;
+    var authMod = null;
+    try { authMod = require('auth'); } catch(e) { authMod = null; }
+    var mod = null;
+    try { mod = require('blockchain/ledger'); } catch(e) { mod = null; }
+    var t = typeof mod;
+    var keys = [];
+    if (mod && typeof mod === 'object') {
+      for (var k in mod) { keys.push(k); }
+    }
+    var authType = typeof authMod;
+    var authKeys = [];
+    if (authMod && typeof authMod === 'object') for (var k in authMod) authKeys.push(k);
+    return { requireType: reqType, authType: authType, authKeys: authKeys, type: t, keys: keys };
+  }
+};
+
+var ledger   = require('blockchain/ledger');
+require('blockchain/api');

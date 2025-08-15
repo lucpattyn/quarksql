@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blockchain Journal — Quarksql</title>
+    <link rel="stylesheet" href="/public/blockchain/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Blockchain Journal</h1>
+      <p class="sub">Double-entry ledger on an immutable chain with rules.</p>
+    </header>
+
+    <section class="card">
+      <h2>Sign In</h2>
+      <div class="grid">
+        <label>Username<input id="u" placeholder="demo" /></label>
+        <label>Password<input id="p" type="password" placeholder="demo" /></label>
+        <div class="actions">
+          <button id="signup">Sign Up</button>
+          <button id="login" class="primary">Login</button>
+        </div>
+      </div>
+      <div id="authStatus" class="muted"></div>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <h2>Initialize</h2>
+        <button id="init" class="secondary">Init Chain + Default Rules</button>
+      </div>
+      <div id="initResult" class="muted"></div>
+    </section>
+
+    <section class="card">
+      <h2>Post Transaction</h2>
+      <div class="grid">
+        <label>Notation<input id="t_notation" placeholder="Transfer to savings" /></label>
+        <label>From (credit)<input id="t_from" placeholder="Assets:Checking" /></label>
+        <label>To (debit)<input id="t_to" placeholder="Assets:Savings" /></label>
+        <label>Amount<input id="t_amount" type="number" min="0" step="0.01" value="1000" /></label>
+        <label>Currency<input id="t_currency" value="USD" /></label>
+      </div>
+      <div class="actions">
+        <button id="post" class="primary">Add Block</button>
+      </div>
+      <pre id="postResult" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Balances</h2>
+      <div class="grid">
+        <label>Account<input id="b_account" placeholder="Assets:Savings" /></label>
+        <label>As Of<input id="b_asof" type="date" /></label>
+      </div>
+      <div class="actions">
+        <button id="getBal">Get Balance</button>
+      </div>
+      <pre id="balResult" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Transactions</h2>
+      <div class="grid">
+        <label>Account<input id="x_account" placeholder="Assets:Savings" /></label>
+      </div>
+      <div class="actions">
+        <button id="getTx">List Transactions</button>
+      </div>
+      <pre id="txResult" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Rules</h2>
+      <div class="actions">
+        <button id="listRules">List Rules</button>
+      </div>
+      <pre id="rulesResult" class="result"></pre>
+    </section>
+
+    <footer>
+      <a href="/">Back to main UI</a>
+    </footer>
+
+    <script src="/public/blockchain/app.js"></script>
+  </body>
+  </html>
+

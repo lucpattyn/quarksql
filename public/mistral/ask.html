@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mistral Chat - Crow Backend</title>
+  <style>
+    :root{
+      --bg: #0f1226;
+      --panel: #161a36;
+      --text: #eef1ff;
+      --muted: #9aa3c7;
+      --primary: #6aa9ff;
+      --userBubble: #2a2f59;
+      --botBubble: #1d2146;
+      --danger: #ff6b6b;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      color:var(--text);
+      background: radial-gradient(1200px 400px at 20% -10%, #243181 0, transparent 60%),
+                  radial-gradient(1200px 500px at 120% 20%, #0d7dd8 0, transparent 50%),
+                  var(--bg);
+      display:flex; align-items:center; justify-content:center;
+      padding:16px;
+    }
+    .app{
+      width: min(960px, 100%);
+      height: min(90vh, 900px);
+      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+      backdrop-filter: blur(10px);
+      display:flex; flex-direction:column; overflow:hidden;
+    }
+    .app__header{
+      display:flex; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0));
+    }
+    .logo{
+      width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:#11152e; color:var(--primary);
+      font-weight:800; letter-spacing:0.5px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+    }
+    .title{font-weight:700}
+    .sub{color:var(--muted); font-size:13px}
+    .row{display:flex; align-items:center; gap:8px; margin-left:auto}
+    select, button, textarea, input{
+      color:var(--text);
+      background:#0f1330; border:1px solid rgba(255,255,255,0.12); border-radius:12px;
+    }
+    select, button{
+      padding:8px 10px; font-size:14px;
+    }
+    button{cursor:pointer}
+    button.primary{background:linear-gradient(180deg, #2d6be0, #1a4fb6); border:0}
+    button:disabled{opacity:0.6; cursor:not-allowed}
+
+    .chat{flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px}
+    .msg{display:flex; gap:10px; align-items:flex-end; max-width:100%}
+    .msg.user{justify-content:flex-end}
+    .bubble{max-width: min(80%, 760px); padding:12px 14px; border-radius:16px; box-shadow:0 8px 24px rgba(0,0,0,0.25); line-height:1.45}
+    .user .bubble{background:var(--userBubble); border:1px solid rgba(255,255,255,0.08); border-bottom-right-radius:6px}
+    .bot .bubble{background:var(--botBubble); border:1px solid rgba(255,255,255,0.08); border-bottom-left-radius:6px}
+    .bubble pre{white-space:pre-wrap; margin:0; font-family:inherit}
+    .time{font-size:11px; color:var(--muted); margin:2px 6px}
+
+    .app__input{
+      padding:12px; border-top:1px solid rgba(255,255,255,0.08); background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,0.03));
+    }
+    .composer{
+      display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:end;
+    }
+    .composer textarea{
+      resize:none; min-height:52px; max-height:200px; padding:12px 14px; outline:none; font-size:15px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+    .hint{color:var(--muted); font-size:12px; margin-top:6px; text-align:center}
+    .error{color:var(--danger)}
+    .typing{display:inline-block; min-width:28px}
+    .typing span{display:inline-block; width:6px; height:6px; margin-right:3px; border-radius:50%; background:var(--muted); opacity:.7; animation:b 1s infinite ease-in-out}
+    .typing span:nth-child(2){animation-delay:.15s}
+    .typing span:nth-child(3){animation-delay:.3s}
+    @keyframes b{0%,80%,100%{transform:scale(0.7); opacity:.45} 40%{transform:scale(1); opacity:1}}
+
+    @media (max-width:640px){
+      .chat{padding:12px}
+      .bubble{max-width:92%}
+    }
+  </style>
+  <script>
+    // Avoid FOUC if needed
+  </script>
+  <noscript>This page requires JavaScript.</noscript>
+  <style></style>
+  <link rel="preconnect" href="" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0f1226" />
+  <meta name="description" content="Mistral chat via Crow WebSocket" />
+</head>
+<body>
+  <div class="app" id="app">
+    <div class="app__header">
+      <div class="logo">M</div>
+      <div>
+        <div class="title">Mistral Chat</div>
+        <div class="sub">Frontend: HTML + Vanilla JS - Backend: Crow C++ x Mistral API</div>
+      </div>
+      <div class="row">
+        <label class="sub" for="model">Model</label>
+        <select id="model">
+          <option value="mistral-small-latest" selected>mistral-small-latest</option>
+          <option value="mistral-medium-latest">mistral-medium-latest</option>
+          <option value="mistral-large-latest">mistral-large-latest</option>
+          <option value="codestral-latest">codestral-latest</option>
+          <option value="ministral-8b-latest">ministral-8b-latest</option>
+        </select>
+        <label class="sub" for="stream" style="margin-left:8px">Stream</label>
+        <input type="checkbox" id="stream" checked />
+      </div>
+    </div>
+
+    <div class="chat" id="chat"></div>
+
+    <div class="app__input">
+      <div class="composer">
+        <textarea id="input" placeholder="Ask anything (Shift+Enter for newline)"></textarea>
+        <button id="send" class="primary">Send</button>
+      </div>
+      <div class="hint" id="hint">WebSocket: <code id="endpointLabel"></code></div>
+    </div>
+  </div>
+
+  <!-- Auth overlay -->
+  <style>
+    .overlay{position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.55);}
+    .overlay.show{display:flex}
+    .card{background:#0f1330;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;min-width:320px;box-shadow:0 10px 30px rgba(0,0,0,0.4)}
+    .row-vert{display:flex; flex-direction:column; gap:10px}
+    .input{padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.16);background:#0b0f2a;color:var(--text)}
+    .btn{padding:10px 12px;border-radius:10px;border:0;background:#244fb4;color:#fff;cursor:pointer}
+    .link{color:var(--primary);cursor:pointer;text-decoration:underline}
+  </style>  
+  <div class="overlay" id="authOverlay">
+    <div class="card">
+      <div class="row-vert">
+        <div class="title" id="authTitle">Login to continue</div>
+        <input class="input" id="authUser" placeholder="Username" />
+        <input class="input" id="authPass" type="password" placeholder="Password" />
+        <button class="btn" id="authSubmit">Login</button>
+        <div class="sub">or <span class="link" id="toggleMode">Create account</span></div>
+        <div class="sub" id="authMsg" style="min-height:18px"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ======== WebSocket endpoint ========
+    let token = localStorage.getItem('token') || '';
+    const WS_URL = ((location.protocol === 'https:') ? 'wss://' : 'ws://') + location.host + '/mistral/ws';
+    const endpointLabel = document.getElementById('endpointLabel');
+    endpointLabel.textContent = WS_URL + ' (connecting...)';
+
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const modelSel = document.getElementById('model');
+    const streamChk = document.getElementById('stream');
+
+    // WebSocket state
+    let ws = null;
+    let pendingSend = null;
+    let currentPre = null; // <pre> node for the active bot response
+
+    function nowTime(){
+      const d = new Date();
+      return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    }
+
+    function el(tag, className, text){
+      const n = document.createElement(tag);
+      if(className) n.className = className;
+      if(text !== undefined) n.textContent = text;
+      return n;
+    }
+
+    function appendMessage(role, content, isTyping=false){
+      const msg = el('div', `msg ${role}`);
+      const bubble = el('div', `bubble`);
+      if(isTyping){
+        const t = el('div', 'typing');
+        t.innerHTML = '<span></span><span></span><span></span>';
+        bubble.appendChild(t);
+      } else {
+        const pre = el('pre');
+        pre.textContent = content;
+        bubble.appendChild(pre);
+      }
+      msg.appendChild(bubble);
+      const time = el('div', 'time', nowTime());
+      msg.appendChild(time);
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+      return msg;
+    }
+
+    function setDisabled(dis){
+      input.disabled = dis; sendBtn.disabled = dis; modelSel.disabled = dis; streamChk.disabled = true;
+    }
+
+    function autosize(){
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    }
+    input.addEventListener('input', autosize);
+    autosize();
+
+    function connectWS(){
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      if (token) {
+        // Offer JWT via subprotocols: ["jwt", "<token>"]
+        //ws = new WebSocket(WS_URL, ['jwt', token]);
+        ws = new WebSocket(WS_URL);
+        
+      } else {
+        ws = new WebSocket(WS_URL);
+      }
+      endpointLabel.textContent = WS_URL + ' (connecting...)';
+
+      ws.addEventListener('open', () => {
+        endpointLabel.textContent = WS_URL + ' (connected)';
+        if (!token) { showAuth(); }
+        if (pendingSend){
+          ws.send(pendingSend);
+          pendingSend = null;
+        }
+      });
+
+      ws.addEventListener('message', (ev) => {
+        try{
+          const msg = JSON.parse(ev.data);
+          setTimeout(function(){
+          	setDisabled(false);
+		  }, 250);
+		  
+		  if (msg.type === 'delta'){
+            if (currentPre){ currentPre.textContent += (msg.delta || ''); }
+          } else if (msg.type === 'final') {
+            // Non-streaming mode: single final message
+            if (currentPre){ currentPre.textContent = (msg.text || ''); }
+            currentPre = null;
+            setDisabled(false);
+          } else if (msg.type === 'done'){
+            currentPre = null;
+            setDisabled(false);
+          } else if (msg.type === 'error'){
+            const err = msg.error || 'Unknown error';
+            if (currentPre){ currentPre.textContent += '\n[error] ' + err; }
+            currentPre = null;
+            setDisabled(false);
+          }
+          chat.scrollTop = chat.scrollHeight;
+          
+        }catch(e){
+          if (currentPre){ currentPre.textContent += String(ev.data || ''); }
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        endpointLabel.textContent = WS_URL + ' (disconnected)';
+        // If we lost the token or never had one, prompt auth
+        if (!token) showAuth();
+        // Ensure UI doesn't remain locked if connection dropped mid-stream
+        setDisabled(false);
+      });
+
+      ws.addEventListener('error', () => {
+        endpointLabel.textContent = WS_URL + ' (error)';
+      });
+    }
+
+    async function send(){
+      const text = input.value.trim();
+      if(!text) return;
+      setDisabled(true);
+
+      appendMessage('user', text);
+      input.value = ''; autosize();
+
+      const typingMsg = appendMessage('bot', '', true);
+      try{
+        // Prepare holder for streaming content
+        const bubble = typingMsg.querySelector('.bubble');
+        bubble.innerHTML = '';
+        const pre = el('pre'); pre.textContent = ''; bubble.appendChild(pre);
+        currentPre = pre;
+
+        // Ensure WS connection
+        connectWS();
+        const payload = JSON.stringify({ prompt: text, model: modelSel.value, stream: !!streamChk.checked });
+        if (ws && ws.readyState === WebSocket.OPEN){
+          ws.send(payload);
+        } else {
+          pendingSend = payload; // will send on open
+        }
+      }catch(err){
+        const bubble = typingMsg.querySelector('.bubble');
+        bubble.innerHTML = '';
+        const pre = el('pre'); pre.innerHTML = 'Error: ' + ((err && err.message) || String(err));
+        bubble.appendChild(pre);
+        setDisabled(false);
+      }
+      input.focus();
+    }
+
+    sendBtn.addEventListener('click', send);
+    input.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter' && !e.shiftKey){
+        e.preventDefault();
+        send();
+      }
+    });
+
+	// Auth overlay logic
+    const overlay = document.getElementById('authOverlay');
+    const authSubmit = document.getElementById('authSubmit');
+    const authUser = document.getElementById('authUser');
+    const authPass = document.getElementById('authPass');
+    const toggleMode = document.getElementById('toggleMode');
+    const authTitle = document.getElementById('authTitle');
+    const authMsg = document.getElementById('authMsg');
+    let signupMode = false;
+
+    if (!token) showAuth();
+    connectWS();
+    
+    function showAuth(){ overlay.classList.add('show'); authUser.focus(); }
+    function hideAuth(){ overlay.classList.remove('show'); }
+    function setToken(t){ token = t; try{ localStorage.setItem('token', t); }catch(e){} }
+
+    async function callAPI(name, payload){
+      const headers = { 'Content-Type': 'application/json' };
+      const res = await fetch('/api/' + name, { method:'POST', headers, body: JSON.stringify(payload||{}) });
+      const text = await res.text();
+      let data; try{ data = text ? JSON.parse(text) : {}; } catch{ data = { error: text || res.statusText }; }
+      if (!res.ok || data.error) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    toggleMode.onclick = ()=>{
+      signupMode = !signupMode;
+      authTitle.textContent = signupMode ? 'Create account' : 'Login to continue';
+      authSubmit.textContent = signupMode ? 'Create account' : 'Login';
+      toggleMode.textContent = signupMode ? 'Login instead' : 'Create account';
+      authMsg.textContent = '';
+    };
+
+    authSubmit.onclick = async ()=>{
+      const username = authUser.value.trim();
+      const password = authPass.value;
+      authMsg.textContent = '';
+      if (!username || !password){ authMsg.textContent = 'Enter username and password'; return; }
+      try{
+        if (signupMode){
+          await callAPI('signup', { username, password });
+          authMsg.textContent = 'Account created. Logging in...';
+        }
+        const res = await callAPI('login', { username, password });
+        if (!res || !res.token) throw new Error('No token');
+        setToken(res.token);
+        hideAuth();
+        // reconnect WS with new token
+        if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+        ws = null; connectWS();
+      } catch(e){ authMsg.textContent = e.message || String(e); }
+    };
+
+    appendMessage('bot', 'Hi! This UI talks to your Crow x Mistral backend over WebSockets. Login to start chatting.');
+  </script>
+</body>
+</html>

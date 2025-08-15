@@ -4,11 +4,8 @@
 #include "DBManager.h"
 #include "QueryExecutor.h"
 #include "JwtUtils.h"
-
-#include "LLM.h"
-
-#include <v8.h>
-#include <libplatform/libplatform.h>
+#include "authmiddleware.h"
+#include "llm_mistral.h"
 #include <fstream>
 
 using namespace v8;
@@ -95,31 +92,75 @@ inline crow::json::wvalue queryResultToJson(const QueryResult& qr) {
     info.GetReturnValue().Set(exports);
 }*/
 
-// —— RequireCallback ——
+// ï¿½ï¿½ RequireCallback ï¿½ï¿½
 static void RequireCallback(const FunctionCallbackInfo<Value>& info) {
     Isolate* iso = info.GetIsolate();
     HandleScope hs(iso);
     Local<Context> ctx = iso->GetCurrentContext();
 
+    if (info.Length() < 1 || !info[0]->IsString()) {
+        iso->ThrowException(String::NewFromUtf8(iso, "require(name) expects a string", NewStringType::kNormal).ToLocalChecked());
+        return;
+    }
+
     std::string name = *String::Utf8Value(iso, info[0]);
+    std::cerr << "[require] name=" << name << "\n";
     if (moduleCache.count(name)) {
+        std::cerr << "[require] cache hit: " << name << "\n";
         info.GetReturnValue().Set(moduleCache[name].Get(iso));
         return;
     }
 
     std::string src = LoadScript("scripts/" + name + ".js");
-    // Only pass `exports`, use global `require` inside JS modules
-    std::string wrapped = "(function(exports){" + src + "\n})";
+    if (src.empty()) {
+        std::cerr << "[require] empty source for: scripts/" << name << ".js\n";
+    }
+    std::string wrapped = "(function(exports, require){\n" + src + "\n})";
     Local<String> code = String::NewFromUtf8(iso, wrapped.c_str(), NewStringType::kNormal).ToLocalChecked();
-    Local<Script> scr = Script::Compile(ctx, code).ToLocalChecked();
-    Local<Function> fn = scr->Run(ctx).ToLocalChecked().As<Function>();
+
+    TryCatch tc(iso);
+    Local<Script> scr;
+    if (!Script::Compile(ctx, code).ToLocal(&scr)) {
+        String::Utf8Value emsg(iso, tc.Exception());
+        std::string msg = *emsg ? *emsg : "Compile error";
+        std::cerr << "[require] compile failed for: " << name << " | " << msg << "\n";
+        iso->ThrowException(String::NewFromUtf8(iso, msg.c_str(), NewStringType::kNormal).ToLocalChecked());
+        return;
+    }
+    Local<Value> fnVal;
+    if (!scr->Run(ctx).ToLocal(&fnVal) || !fnVal->IsFunction()) {
+        String::Utf8Value emsg(iso, tc.Exception());
+        std::string msg = *emsg ? *emsg : "Run error";
+        iso->ThrowException(String::NewFromUtf8(iso, msg.c_str(), NewStringType::kNormal).ToLocalChecked());
+        return;
+    }
+    Local<Function> fn = fnVal.As<Function>();
 
     Local<Object> exports = Object::New(iso);
-    Local<Value> args[1] = { exports };
-    fn->Call(ctx, ctx->Global(), 1, args).ToLocalChecked();
+
+    // Grab global require to pass through
+    Local<Value> reqVal;
+    if (!ctx->Global()->Get(ctx, String::NewFromUtf8(iso, "require", NewStringType::kNormal).ToLocalChecked()).ToLocal(&reqVal)) {
+        reqVal = Undefined(iso);
+    }
+
+    Local<Value> args[2] = { exports, reqVal };
+    Local<Value> ignored;
+    if (!fn->Call(ctx, ctx->Global(), 2, args).ToLocal(&ignored)) {
+        // propagate the exception to JS caller so it surfaces
+        if (tc.HasCaught()) {
+            String::Utf8Value emsg(iso, tc.Exception());
+            std::string msg = *emsg ? *emsg : "Run error";
+            std::cerr << "[require] call exception for: " << name << " | " << msg << "\n";
+            iso->ThrowException(tc.Exception());
+        }
+        std::cerr << "[require] call failed for: " << name << "\n";
+        return;
+    }
 
     moduleCache[name].Reset(iso, exports);
     info.GetReturnValue().Set(exports);
+    std::cerr << "[require] loaded: " << name << "\n";
 }
 
 // jwt binding
@@ -281,6 +322,102 @@ static void BindDbObject(Isolate* iso, Local<Context> ctx) {
              FunctionTemplate::New(iso, JsDbQuery));
     tpl->Set(String::NewFromUtf8(iso,"execute",NewStringType::kNormal).ToLocalChecked(),
              FunctionTemplate::New(iso, JsDbExecute));
+
+    // Direct RocksDB key-value accessors (for blockchain module)
+    auto JsDbKvPut = [](const FunctionCallbackInfo<Value>& info){
+        Isolate* iso = info.GetIsolate();
+        HandleScope hs(iso);
+        if (info.Length() < 3 || !info[0]->IsString() || !info[1]->IsString() || !info[2]->IsString()) {
+            iso->ThrowException(String::NewFromUtf8(iso, "db.kvPut(cf,key,val) requires 3 strings", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        std::string cf   = *String::Utf8Value(iso, info[0]);
+        std::string key  = *String::Utf8Value(iso, info[1]);
+        std::string val  = *String::Utf8Value(iso, info[2]);
+        auto* handle = DBManager::instance().cf(cf);
+        if (!handle) {
+            iso->ThrowException(String::NewFromUtf8(iso, "Unknown column family", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        auto s = DBManager::instance().db()->Put(rocksdb::WriteOptions(), handle, key, val);
+        info.GetReturnValue().Set(Boolean::New(iso, s.ok()));
+    };
+
+    auto JsDbKvGet = [](const FunctionCallbackInfo<Value>& info){
+        Isolate* iso = info.GetIsolate();
+        HandleScope hs(iso);
+        if (info.Length() < 2 || !info[0]->IsString() || !info[1]->IsString()) {
+            iso->ThrowException(String::NewFromUtf8(iso, "db.kvGet(cf,key) requires 2 strings", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        std::string cf   = *String::Utf8Value(iso, info[0]);
+        std::string key  = *String::Utf8Value(iso, info[1]);
+        auto* handle = DBManager::instance().cf(cf);
+        if (!handle) {
+            iso->ThrowException(String::NewFromUtf8(iso, "Unknown column family", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        std::string val;
+        auto s = DBManager::instance().db()->Get(rocksdb::ReadOptions(), handle, key, &val);
+        if (!s.ok()) val.clear();
+        info.GetReturnValue().Set(String::NewFromUtf8(iso, val.c_str(), NewStringType::kNormal).ToLocalChecked());
+    };
+
+    auto JsDbKvDel = [](const FunctionCallbackInfo<Value>& info){
+        Isolate* iso = info.GetIsolate();
+        HandleScope hs(iso);
+        if (info.Length() < 2 || !info[0]->IsString() || !info[1]->IsString()) {
+            iso->ThrowException(String::NewFromUtf8(iso, "db.kvDel(cf,key) requires 2 strings", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        std::string cf   = *String::Utf8Value(iso, info[0]);
+        std::string key  = *String::Utf8Value(iso, info[1]);
+        auto* handle = DBManager::instance().cf(cf);
+        if (!handle) {
+            iso->ThrowException(String::NewFromUtf8(iso, "Unknown column family", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        auto s = DBManager::instance().db()->Delete(rocksdb::WriteOptions(), handle, key);
+        info.GetReturnValue().Set(Boolean::New(iso, s.ok()));
+    };
+
+    auto JsDbKvKeys = [](const FunctionCallbackInfo<Value>& info){
+        Isolate* iso = info.GetIsolate();
+        HandleScope hs(iso);
+        Local<Context> ctx = iso->GetCurrentContext();
+        if (info.Length() < 1 || !info[0]->IsString()) {
+            iso->ThrowException(String::NewFromUtf8(iso, "db.kvKeys(cf[,prefix]) requires cf string", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        std::string cf   = *String::Utf8Value(iso, info[0]);
+        std::string prefix = (info.Length() >= 2 && info[1]->IsString()) ? *String::Utf8Value(iso, info[1]) : std::string();
+        auto* handle = DBManager::instance().cf(cf);
+        if (!handle) {
+            iso->ThrowException(String::NewFromUtf8(iso, "Unknown column family", NewStringType::kNormal).ToLocalChecked());
+            return;
+        }
+        auto it = std::unique_ptr<rocksdb::Iterator>(DBManager::instance().db()->NewIterator(rocksdb::ReadOptions(), handle));
+        Local<Array> arr = Array::New(iso);
+        uint32_t idx = 0;
+        if (prefix.empty()) {
+            for (it->SeekToFirst(); it->Valid(); it->Next()) {
+                auto k = it->key().ToString();
+                arr->Set(ctx, idx++, String::NewFromUtf8(iso, k.c_str(), NewStringType::kNormal).ToLocalChecked()).FromJust();
+            }
+        } else {
+            for (it->Seek(prefix); it->Valid(); it->Next()) {
+                auto k = it->key().ToString();
+                if (k.rfind(prefix, 0) != 0) break;
+                arr->Set(ctx, idx++, String::NewFromUtf8(iso, k.c_str(), NewStringType::kNormal).ToLocalChecked()).FromJust();
+            }
+        }
+        info.GetReturnValue().Set(arr);
+    };
+
+    tpl->Set(String::NewFromUtf8(iso,"kvPut",NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(iso, JsDbKvPut));
+    tpl->Set(String::NewFromUtf8(iso,"kvGet",NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(iso, JsDbKvGet));
+    tpl->Set(String::NewFromUtf8(iso,"kvDel",NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(iso, JsDbKvDel));
+    tpl->Set(String::NewFromUtf8(iso,"kvKeys",NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(iso, JsDbKvKeys));
 
     Local<Object> dbObj = tpl->NewInstance(ctx).ToLocalChecked();
     Maybe<bool> ok = ctx->Global()
@@ -496,7 +633,7 @@ int main(int argc, char** argv) {
         BindDbObject(g_isolate, ctx);
         BindJwtUtils(g_isolate, ctx);
         
-        // 2.1) Grab the global “require”  
+        // 2.1) Grab the global ï¿½requireï¿½  
 		v8::Local<v8::Value> require_val;
 		if (!ctx->Global()
 		        ->Get(ctx, v8::String::NewFromUtf8(g_isolate, "require",
@@ -504,12 +641,12 @@ int main(int argc, char** argv) {
 		                             .ToLocalChecked())
 		        .ToLocal(&require_val) ||
 		    !require_val->IsFunction()) {
-			// handle the fact that “require” isn’t actually defined
+			// handle the fact that ï¿½requireï¿½ isnï¿½t actually defined
 		  	return -1;
 		}
 		v8::Local<v8::Function> requireFn = require_val.As<v8::Function>();
 
-		// 2.2) Create the argument you actually want – a V8 string “auth”
+		// 2.2) Create the argument you actually want ï¿½ a V8 string ï¿½authï¿½
 		v8::Local<v8::String> auth_str =
 		    v8::String::NewFromUtf8(g_isolate, "auth", v8::NewStringType::kNormal)
 		        .ToLocalChecked();
@@ -520,11 +657,11 @@ int main(int argc, char** argv) {
 		    requireFn->Call(ctx, ctx->Global(), 1, require_argv);
 		v8::Local<v8::Value> authMod;
 		if (!maybe_mod.ToLocal(&authMod)) {
-		  // the require() threw an exception—handle it!
+		  // the require() threw an exceptionï¿½handle it!
 		  return 0;
 		}
 
-		// 2.4) Stash it back on the global as “auth”
+		// 2.4) Stash it back on the global as ï¿½authï¿½
 		ctx->Global()
 		    ->Set(ctx,
 		          v8::String::NewFromUtf8(g_isolate, "auth",
@@ -534,7 +671,7 @@ int main(int argc, char** argv) {
 		    .FromJust();
 
 	
-		// ——— 2.5) require("sanitize") and stash it as global “sanitize” ————————————
+		// ï¿½ï¿½ï¿½ 2.5) require("sanitize") and stash it as global ï¿½sanitizeï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		v8::Local<v8::String> sanitize_str =
 		    v8::String::NewFromUtf8(g_isolate, "sanitize", v8::NewStringType::kNormal)
 		        .ToLocalChecked();
@@ -582,245 +719,170 @@ int main(int argc, char** argv) {
         
    	} // V8 engine initial scope ends
     
-	// —— AuthMiddleware with void-cast ——
-	struct AuthMiddleware {
-		    struct context {};
-		    void before_handle(crow::request& req, crow::response& res, context&) {
-							
-				// 1) Skip public endpoints
-		        if (req.url == "/" || req.url == "/api/login" || req.url == "/api/signup" 
-					|| req.url.rfind("/public/", 0) == 0) 
-					return;
-		
-				std::cout << "before_handle" << std::endl;
-		        // 2) Extract Bearer token
-		        auto h = req.get_header_value("Authorization");
-		        if (h.rfind("Bearer ", 0) != 0) {
-		            res.code = 401;
-		            return res.end("Missing token");
-		        }
-		        std::string token = h.substr(7);
-		
-		        // 1) —— V8 THREAD SETUP ——
-		    	v8::Locker        locker(g_isolate);
-		    	v8::Isolate::Scope iscope(g_isolate);
-		    	v8::HandleScope   hs(g_isolate);
-		
-		    	v8::Local<v8::Context> _ctx = persistent_ctx.Get(g_isolate);
-		    
-				//----Inner Context Scope (“new scope”) ————
-  				v8::Context::Scope context_scope(_ctx);
-				// ——————————————————
-		
-		    	// 2) Invoke your safe API function under TryCatch
-		    	v8::TryCatch tc(g_isolate);
-			        
-		        // ————————————————————————————————————
-		
-		        // 3) Lookup global "auth" object
-		        v8::Local<v8::Value> authVal;
-		        if (!_ctx->Global()
-		                 ->Get(_ctx,
-		                       v8::String::NewFromUtf8(g_isolate, "auth",
-		                                               v8::NewStringType::kNormal)
-		                           .ToLocalChecked())
-		                 .ToLocal(&authVal) ||
-		            !authVal->IsObject()) {
-		            res.code = 500;
-		            return res.end("Auth module missing");
-		        }
-		        v8::Local<v8::Object> authObj = authVal.As<v8::Object>();
-		
-		        // 4) Lookup auth.verify
-		        v8::Local<v8::Value> verifyVal;
-		        if (!authObj
-		                 ->Get(_ctx,
-		                       v8::String::NewFromUtf8(g_isolate, "verify",
-		                                               v8::NewStringType::kNormal)
-		                           .ToLocalChecked())
-		                 .ToLocal(&verifyVal) ||
-		            !verifyVal->IsFunction()) {
-		            res.code = 500;
-		            return res.end("Auth.verify not a function");
-		        }
-		        v8::Local<v8::Function> verifyFn = verifyVal.As<v8::Function>();
-		
-		        // 5) Call verify(token)
-		        v8::Local<v8::Value> arg =
-		            v8::String::NewFromUtf8(g_isolate, token.c_str(),
-		                                    v8::NewStringType::kNormal)
-		                .ToLocalChecked();
-		
-		        v8::Local<v8::Value> result;
-		        if (!verifyFn->Call(_ctx, authObj, 1, &arg).ToLocal(&result)) {
-		            // JS threw or verify returned a rejected promise
-		            res.code = 401;
-		            return res.end("Invalid token");
-		        }
-		
-		        // Optional: inspect `result` if you want to check scopes/claims
-		        // e.g. auto payloadJson = *v8::String::Utf8Value(g_isolate, result);
-		        //      // parse JSON, check user/scopes...
 	
-	        	// If we fall through, token is valid
-	    	}		    
-		
-		    void after_handle(crow::request&, crow::response&, context&) {}
-		};
+    crow::App<AuthMiddleware> app;
+    // Configure whether to allow JWT via query param (?token=)
+    // Set environment variable WS_ALLOW_QUERY_TOKEN=0 or 'false' to disable.
+    if (const char* env = std::getenv("WS_ALLOW_QUERY_TOKEN")) {
+        std::string v(env);
+        if (v == "0" || v == "false" || v == "FALSE") {
+            AuthMiddleware::SetQueryTokenFallback(false);
+        }
+    }
 
-        crow::App<AuthMiddleware> app;
-		
-		// --- Schema & DB init ---
-    	SchemaManager::loadFromFile("schemas.json");
-    	if (!DBManager::instance().init("quarks_db")) return 1;
-    	IndexManager::rebuildAll();
+	
+	// --- Schema & DB init ---
+	SchemaManager::loadFromFile("schemas.json");
+	if (!DBManager::instance().init("quarks_db")) return 1;
+	IndexManager::rebuildAll();
+	
+	// ---------- Crow route wiring for LLM ----------
+    /*CROW_ROUTE(app, "/llm/generateCode")
+	    .methods("POST"_method)
+    ([](const crow::request& req){
     	
-    	// ---------- Crow route wiring for LLM ----------
-	    CROW_ROUTE(app, "/llm/generateCode")
-		    .methods("POST"_method)
-	    ([](const crow::request& req){
-	    	
-	    	std::cout << "llm" << std::endl;
+    	std::cout << "llm" << std::endl;
+    
+    	curl_global_init(CURL_GLOBAL_DEFAULT);
+
+	    LLMConfig cfg;
+	    // Set one of these:
+	    // cfg.PROXY_URL = "https://your-proxy.example/generate";           // preferred
+	    // or direct:
+	    cfg.OPENROUTER_API_KEY = "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";
+		                     // keep server-side!
+	
+	    try {
+            auto body = json::parse(req.body);
+
+            std::string requirements = body["requirements"].get<std::string>();
+            std::string model = body.value("model", std::string("qwen/qwen3-30b-a3b:free"));
+            bool stream = body.value("stream", false);
+            
+            std::cout << requirements << model << stream << std::endl;
+
+            std::string code = generateCodeLLM(cfg, requirements, model, stream);
+
+            json out = { {"ok", true}, {"code", code} };
+            crow::response r{ out.dump() };
+            r.set_header("Content-Type", "application/json; charset=utf-8");
+            return r;
+        } catch (const std::exception& e) {
+            json err = { {"ok", false}, {"error", e.what()} };
+            crow::response r{ 500, err.dump() };
+            r.set_header("Content-Type", "application/json; charset=utf-8");
+            return r;
+        }
+        
+        curl_global_cleanup();
+    });*/
+	
+
+	CROW_ROUTE(app, "/api/<string>")
+	    .methods("POST"_method)
+	([&](const crow::request& req, crow::response& res, std::string fn) {
+	    // 1) Parse JSON input, default to {}
+	    auto body = crow::json::load(req.body);
+	    if (!body || body.t() != crow::json::type::Object)
+	        body = crow::json::load("{}");
+	
+	    // ï¿½ï¿½ V8 THREAD SETUP ï¿½ï¿½
+	    v8::Locker        locker(g_isolate);
+	    v8::Isolate::Scope iscope(g_isolate);
+	    v8::HandleScope   hs(g_isolate);
+	
+	    v8::Local<v8::Context> ctx = persistent_ctx.Get(g_isolate);
 	    
-	    	curl_global_init(CURL_GLOBAL_DEFAULT);
+		//----Inner Context Scope (ï¿½new scopeï¿½) ï¿½ï¿½ï¿½ï¿½
+		v8::Context::Scope context_scope(ctx);
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	
-		    LLMConfig cfg;
-		    // Set one of these:
-		    // cfg.PROXY_URL = "https://your-proxy.example/generate";           // preferred
-		    // or direct:
-		    cfg.OPENROUTER_API_KEY = "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";
-			                     // keep server-side!
-		
-		    try {
-	            auto body = json::parse(req.body);
+	    // 2) Invoke your safe API function under TryCatch
+	    v8::TryCatch tc(g_isolate);
+	    v8::Local<v8::Value> result = InvokeApiFunction(g_isolate, ctx, fn, body);
 	
-	            std::string requirements = body["requirements"].get<std::string>();
-	            std::string model = body.value("model", std::string("qwen/qwen3-30b-a3b:free"));
-	            bool stream = body.value("stream", false);
-	            
-	            std::cout << requirements << model << stream << std::endl;
+	    // If the JS handler itself threw, catch it:
+	    if (tc.HasCaught()) {
+	        v8::String::Utf8Value err(g_isolate, tc.Exception());
+	        res.code = 500;
+	        return res.end(std::string("JS handler exception: ") + *err);
+	    }
+	    
+	    // 3) If handler returned undefined, 404 
+	    if (result->IsUndefined()) {
+	        res.code = 404;
+	        return res.end("API handler undefined or error");
+	    }
+	    
+	    // 4) Safely JSON.stringify the result
+	    std::string s;
+		s = SafeStringify(g_isolate, ctx, result);	
+		std::cout << "got result: " << s << std::endl;
 	
-	            std::string code = generateCodeLLM(cfg, requirements, model, stream);
-	
-	            json out = { {"ok", true}, {"code", code} };
-	            crow::response r{ out.dump() };
-	            r.set_header("Content-Type", "application/json; charset=utf-8");
-	            return r;
-	        } catch (const std::exception& e) {
-	            json err = { {"ok", false}, {"error", e.what()} };
-	            crow::response r{ 500, err.dump() };
-	            r.set_header("Content-Type", "application/json; charset=utf-8");
-	            return r;
-	        }
-	        
-	        curl_global_cleanup();
-	    });
-    	
+		res.set_header("Content-Type", "application/json");
+		return res.end(s);
 
-		CROW_ROUTE(app, "/api/<string>")
-		    .methods("POST"_method)
-		([&](const crow::request& req, crow::response& res, std::string fn) {
-		    // 1) Parse JSON input, default to {}
-		    auto body = crow::json::load(req.body);
-		    if (!body || body.t() != crow::json::type::Object)
-		        body = crow::json::load("{}");
-		
-		    // —— V8 THREAD SETUP ——
-		    v8::Locker        locker(g_isolate);
-		    v8::Isolate::Scope iscope(g_isolate);
-		    v8::HandleScope   hs(g_isolate);
-		
-		    v8::Local<v8::Context> ctx = persistent_ctx.Get(g_isolate);
-		    
-			//----Inner Context Scope (“new scope”) ————
-  			v8::Context::Scope context_scope(ctx);
-			// ——————————————————
-		
-		    // 2) Invoke your safe API function under TryCatch
-		    v8::TryCatch tc(g_isolate);
-		    v8::Local<v8::Value> result = InvokeApiFunction(g_isolate, ctx, fn, body);
-		
-		    // If the JS handler itself threw, catch it:
-		    if (tc.HasCaught()) {
-		        v8::String::Utf8Value err(g_isolate, tc.Exception());
-		        res.code = 500;
-		        return res.end(std::string("JS handler exception: ") + *err);
-		    }
-		    
-		    // 3) If handler returned undefined, 404 
-		    if (result->IsUndefined()) {
-		        res.code = 404;
-		        return res.end("API handler undefined or error");
-		    }
-		    
-		    // 4) Safely JSON.stringify the result
-		    std::string s;
-			s = SafeStringify(g_isolate, ctx, result);	
-			std::cout << "got result: " << s << std::endl;
-		
-			res.set_header("Content-Type", "application/json");
-			return res.end(s);
-
-		});
-        
-        /////////
-        
-        // 6) Default page provider 
-        crow::mustache::set_base("./public/");
-    	CROW_ROUTE(app, "/")([]() {
+	});
+    
+    /////////
+    
+    // 6) Default page provider 
+    crow::mustache::set_base("./public/");
+	CROW_ROUTE(app, "/")([]() {
+        crow::mustache::context ctx;
+        ctx["name"] = "Crow User";
+        auto page = crow::mustache::load("index.html");
+        return page.render(ctx);
+    });
+	/*CROW_ROUTE(app, "/public/<path>")
+	([](std::string p) {
+		crow::mustache::context ctx;
+        ctx["name"] = "Crow User";
+        auto page = crow::mustache::load(p);
+        return page.render(ctx);
+    });*/
+    
+    CROW_ROUTE(app, "/public/<path>")
+	([](std::string p) {
+	    // guard + directory default
+	    if (p.find("..") != std::string::npos) return crow::response(404);
+	    if (p.empty() || p.back() == '/') p += "index.html";
+	
+	    const std::string mime = mime_for(p);
+	
+	    // HTML via mustache (uses crow::mustache::set_base("public") you set earlier)
+	    if (mime.rfind("text/html", 0) == 0) {
 	        crow::mustache::context ctx;
 	        ctx["name"] = "Crow User";
-	        auto page = crow::mustache::load("index.html");
-	        return page.render(ctx);
-	    });
-		/*CROW_ROUTE(app, "/public/<path>")
-		([](std::string p) {
-			crow::mustache::context ctx;
-	        ctx["name"] = "Crow User";
-	        auto page = crow::mustache::load(p);
-	        return page.render(ctx);
-	    });*/
-	    
-	    CROW_ROUTE(app, "/public/<path>")
-		([](std::string p) {
-		    // guard + directory default
-		    if (p.find("..") != std::string::npos) return crow::response(404);
-		    if (p.empty() || p.back() == '/') p += "index.html";
-		
-		    const std::string mime = mime_for(p);
-		
-		    // HTML via mustache (uses crow::mustache::set_base("public") you set earlier)
-		    if (mime.rfind("text/html", 0) == 0) {
-		        crow::mustache::context ctx;
-		        ctx["name"] = "Crow User";
-		        auto body = crow::mustache::load(p).render(ctx);
-		
-		        crow::response r(body);
-		        r.set_header("Content-Type", mime);
-		        return r;
-		    }
-		
-		    // everything else served raw from ./public
-		    std::ifstream f((fs::path("public") / p).string(), std::ios::binary);
-		    if (!f.good()) return crow::response(404);
-		
-		    std::ostringstream ss; ss << f.rdbuf();
-		    crow::response r(ss.str());
-		    r.set_header("Content-Type", mime);
-		    return r;
-		});
-	    
-		/*CROW_ROUTE(app, "/public/voice/<string>")
-		([](std::string p) {
-		    std::string v = std::string("/voice/") + p;
-	        crow::mustache::context ctx;
-	        ctx["name"] = "Crow User";
-	        auto page = crow::mustache::load(v);
-	        return page.render(ctx);
-	    });*/
-	    
-	    
-        app.port(18080).multithreaded().run();
+	        auto body = crow::mustache::load(p).render(ctx);
+	
+	        crow::response r(body);
+	        r.set_header("Content-Type", mime);
+	        return r;
+	    }
+	
+	    // everything else served raw from ./public
+	    std::ifstream f((fs::path("public") / p).string(), std::ios::binary);
+	    if (!f.good()) return crow::response(404);
+	
+	    std::ostringstream ss; ss << f.rdbuf();
+	    crow::response r(ss.str());
+	    r.set_header("Content-Type", mime);
+	    return r;
+	});
+    
+	// Wire routes (works with any crow::App<...>)
+	std::string llm_key = "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";
+	Mistral::SetupRoutes(&app, std::string(llm_key));
+	
+	/*try {
+        Mistral::TestCall(llm_key);
+    } catch (const std::exception& e) {
+        std::cerr << "Error calling Mistral: " << e.what() << "\n";
+        return 2;
+    }*/
+
+    app.port(18080).multithreaded().run();
 
 
 	// OPTIONAL, to be extra-sure there really are no left-over scopes (may cause core dump)
@@ -834,4 +896,3 @@ int main(int argc, char** argv) {
 	
 	return 0;
 }
-

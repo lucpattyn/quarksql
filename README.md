@@ -80,6 +80,24 @@ Copy:
 Visit `http://localhost:18080/` for the basic accounting example.
 ---
 
+## New: Blockchain Journal (Rules + RocksDB via V8)
+
+- JS business logic for an immutable, double-entry blockchain lives under `scripts/blockchain/`.
+- Direct RocksDB KV access is exposed into JS via new V8 bindings: `db.kvPut/kvGet/kvDel/kvKeys`.
+- A minimal HTML5 test UI is available at `http://localhost:18080/public/blockchain/`.
+
+What’s included:
+- Immutable ledger primitives: Amount, Posting, Transaction, Block, Chain validation
+- Rule engine with types (validation, transformation, categorization, approval)
+- Persistence to RocksDB column family `blockchain` (keys: `chain:*`, `rules:*`)
+- API endpoints mounted in JS: `api.bc_*` (init, addTransaction, getBalance, getTransactions, listRules)
+
+Files:
+- `scripts/blockchain/ledger.js` — core ledger + rule engine + RocksDB persistence
+- `scripts/blockchain/api.js` — exposes `api.bc_*` endpoints into the V8 business layer
+- `public/blockchain/` — UI (`index.html`, `app.js`, `style.css`)
+
+
 ## 🌐 REST API
 
 All endpoints are POST `/api/<function>` with JSON.
@@ -302,6 +320,25 @@ Visit `http://localhost:18080/public/voice/index.html` for the voice based accou
 - **Extensibility** — add new API endpoints by simply adding new `api.*` functions
 
 ---
+
+## Rules Based Transaction Validation
+Thanks to some amazing research done by Ray Garcia, 
+we were able to create a system where business logics based on rules
+could be created by LLM and tested (on 15th August, 2025).
+
+
+For a demo
+```
+Visit `http://localhost:18080/public/blockchain/index.html` 
+
+---
+Follow the prompts in the text box.
+
+The logics for rule based transactions are inside /scripts/blockchain
+The UI is available at /public/blockchain
+
+Further readings:
+[Excerpt from Ray](https://dev.to/lucpattyn/business-rules-conversion-prompt-2pp5)
 
 ## License
 
