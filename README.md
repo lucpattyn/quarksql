@@ -330,8 +330,8 @@ could be created by LLM and tested (on 15th August, 2025).
 For a demo
 ```
 Visit `http://localhost:18080/public/blockchain/index.html` 
+```
 
----
 Follow the prompts in the text box.
 
 The logics for rule based transactions are inside /scripts/blockchain
