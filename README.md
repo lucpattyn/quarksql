@@ -32,6 +32,7 @@ After building, copy `schemas.json`, `scripts/`, and `public/` into `build/`.
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake librocksdb-dev libv8-dev
+sudo apt install libcurl4-openssl-dev
 ```
 
 ```

@@ -105,5 +105,5 @@ target_link_libraries(quarksql PRIVATE
     crypto
     Threads::Threads
     -lv8
-    -lcurl
+    CURL::libcurl
 )
