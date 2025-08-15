@@ -5,7 +5,7 @@ var sanitize = (typeof sanitize !== 'undefined') ? sanitize : require('sanitize'
 var auth     = (typeof auth     !== 'undefined') ? auth     : require('auth');
 var ledger   = require('blockchain/ledger');
 
-var api = (typeof api !== 'undefined') ? api : (this.api = {});
+api = (typeof api !== 'undefined') ? api : (this.api = {});
 
 function requireUser(token){
   sanitize.requireAuth(token);

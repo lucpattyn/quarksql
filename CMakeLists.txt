@@ -9,6 +9,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Enable threading
 find_package(Threads REQUIRED)
 
+# Enable Curl
+find_package(CURL REQUIRED)
+
 # Prefer a local copy of Boost.System from libs/thirdparties
 set(_LOCAL_BOOST_LIBDIR "${PROJECT_SOURCE_DIR}/libs/thirdparties")
 set(_LOCAL_BOOST_SYSTEM_CANDIDATES

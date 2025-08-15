@@ -81,22 +81,6 @@ Copy:
 Visit `http://localhost:18080/` for the basic accounting example.
 ---
 
-## New: Blockchain Journal (Rules + RocksDB via V8)
-
-- JS business logic for an immutable, double-entry blockchain lives under `scripts/blockchain/`.
-- Direct RocksDB KV access is exposed into JS via new V8 bindings: `db.kvPut/kvGet/kvDel/kvKeys`.
-- A minimal HTML5 test UI is available at `http://localhost:18080/public/blockchain/`.
-
-What’s included:
-- Immutable ledger primitives: Amount, Posting, Transaction, Block, Chain validation
-- Rule engine with types (validation, transformation, categorization, approval)
-- Persistence to RocksDB column family `blockchain` (keys: `chain:*`, `rules:*`)
-- API endpoints mounted in JS: `api.bc_*` (init, addTransaction, getBalance, getTransactions, listRules)
-
-Files:
-- `scripts/blockchain/ledger.js` — core ledger + rule engine + RocksDB persistence
-- `scripts/blockchain/api.js` — exposes `api.bc_*` endpoints into the V8 business layer
-- `public/blockchain/` — UI (`index.html`, `app.js`, `style.css`)
 
 
 ## 🌐 REST API
@@ -322,11 +306,36 @@ Visit `http://localhost:18080/public/voice/index.html` for the voice based accou
 
 ---
 
-## Rules Based Transaction Validation
-Thanks to some amazing research done by Ray Garcia, 
-we were able to create a system where business logics based on rules
-could be created by LLM and tested (on 15th August, 2025).
+## New: Blockchain Journal (Rules + RocksDB via V8)
 
+- JS business logic for an immutable, double-entry blockchain lives under `scripts/blockchain/`.
+- Direct RocksDB KV access is exposed into JS via new V8 bindings: `db.kvPut/kvGet/kvDel/kvKeys`.
+- A minimal HTML5 test UI is available at `http://localhost:18080/public/blockchain/index.html`.
+
+What’s included:
+- Immutable ledger primitives: Amount, Posting, Transaction, Block, Chain validation
+- Rule engine with types (validation, transformation, categorization, approval)
+- Persistence to RocksDB column family `blockchain` (keys: `chain:*`, `rules:*`)
+- API endpoints mounted in JS: `api.bc_*` (init, addTransaction, getBalance, getTransactions, listRules)
+
+Files:
+- `scripts/blockchain/ledger.js` — core ledger + rule engine + RocksDB persistence
+- `scripts/blockchain/api.js` — exposes `api.bc_*` endpoints into the V8 business layer
+- `public/blockchain/` — UI (`index.html`, `app.js`, `style.css`)
+
+
+## Rules Based Transaction Validation
+
+Thanks to the research done by Ray Garcia, 
+we were able to create a well-designed framework where we could specify rules
+that can be applied to business transactions.
+
+Once the rules were specified in human language, a document was produced based on mistral
+https://docs.google.com/document/d/1guSIVeuSONrs0OTBfm5ogvpiJg7hhQQmtOiXq62qTlc/edit?usp=sharing
+
+The blockchain app and ledge was created based on the doc (/scripts/blockchain files)
+- The logics for rule based transactions are inside /scripts/blockchain
+- The UI is available at /public/blockchain
 
 For a demo
 ```
@@ -340,6 +349,8 @@ The UI is available at /public/blockchain
 
 Further readings:
 [Excerpt from Ray](https://dev.to/lucpattyn/business-rules-conversion-prompt-2pp5)
+
+---
 
 ## License
 
